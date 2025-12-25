@@ -6,12 +6,12 @@ from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
 // 1. CONFIGURATION (REPLACE THIS SECTION!)
 // ============================================
 const firebaseConfig = {
-    apiKey: "YOUR_API_KEY",
-    authDomain: "YOUR_PROJECT.firebaseapp.com",
-    projectId: "YOUR_PROJECT_ID",
-    storageBucket: "YOUR_PROJECT.appspot.com",
-    messagingSenderId: "NUMBERS",
-    appId: "NUMBERS"
+    apiKey: "AIzaSyAo_QQ_3i_GmQsyi3tTUWwmJK09z_Y3sNM",
+    authDomain: "chatapp-e007a.firebaseapp.com",
+    projectId: "chatapp-e007a",
+    storageBucket: "chatapp-e007a.firebasestorage.app",
+    messagingSenderId: "853709166914",
+    appId: "1:853709166914:web:21f0bb1b8e03a796b010db"
 };
 
 const app = initializeApp(firebaseConfig);

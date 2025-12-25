@@ -22,6 +22,7 @@ let selectedChatUser = null;
 let unsubscribeMessages = null;
 let mediaRecorder = null;
 let audioChunks = [];
+let currentStream = null; // Store stream to turn it off later
 
 // --- LOGIN LOGIC ---
 window.usernameLogin = async () => {
@@ -167,50 +168,46 @@ window.sendMessage = async () => {
     input.value = "";
 };
 
-// --- VOICE RECORDING FIX ---
+// --- IMPROVED VOICE RECORDING ---
 const micBtn = document.getElementById('mic-btn');
 
-// Initialize Mic
-navigator.mediaDevices.getUserMedia({ audio: true }).then(stream => {
-    mediaRecorder = new MediaRecorder(stream);
-    
-    mediaRecorder.ondataavailable = e => {
-        audioChunks.push(e.data);
-    };
-
-    mediaRecorder.onstop = async () => {
-        // If the audio is extremely short (accidental tap), ignore it
-        if(audioChunks.length === 0) return;
-
-        const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
-        audioChunks = [];
+window.startRecording = async () => {
+    // 1. Ask for Mic permission only when button is pressed
+    try {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        currentStream = stream;
         
-        const reader = new FileReader();
-        reader.readAsDataURL(audioBlob);
-        reader.onloadend = async () => {
-            const base64Audio = reader.result;
-            // Limit size to prevent crash (approx 1MB limit)
-            if(base64Audio.length > 900000) { 
-                alert("Voice note too long for this version!"); 
-                return; 
-            }
-            
-            const chatID = getChatID();
-            await addDoc(collection(db, "chats", chatID, "messages"), {
-                audioData: base64Audio, senderId: currentUser.uid, createdAt: serverTimestamp(), type: "audio"
-            });
-        };
-    };
-}).catch(e => console.log("Mic permission denied", e));
+        mediaRecorder = new MediaRecorder(stream);
+        audioChunks = [];
 
-window.startRecording = () => {
-    if(!mediaRecorder) return alert("Microphone not ready. Please allow permissions.");
-    if(mediaRecorder.state === "recording") return; // Prevent double start
-    
-    audioChunks = [];
-    // 'timeslice' of 100ms ensures we get data chunks even if stopped quickly
-    mediaRecorder.start(100); 
-    micBtn.classList.add('recording-anim');
+        mediaRecorder.ondataavailable = e => audioChunks.push(e.data);
+
+        mediaRecorder.onstop = async () => {
+            // Stop the hardware mic completely
+            stream.getTracks().forEach(track => track.stop());
+            
+            if(audioChunks.length === 0) return;
+            const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
+            
+            const reader = new FileReader();
+            reader.readAsDataURL(audioBlob);
+            reader.onloadend = async () => {
+                const base64Audio = reader.result;
+                if(base64Audio.length > 900000) { alert("Voice note too long!"); return; }
+                const chatID = getChatID();
+                await addDoc(collection(db, "chats", chatID, "messages"), {
+                    audioData: base64Audio, senderId: currentUser.uid, createdAt: serverTimestamp(), type: "audio"
+                });
+            };
+        };
+
+        mediaRecorder.start();
+        micBtn.classList.add('recording-anim');
+
+    } catch (err) {
+        alert("Microphone permission denied.");
+        console.error(err);
+    }
 };
 
 window.stopRecording = () => {
@@ -220,21 +217,17 @@ window.stopRecording = () => {
     }
 };
 
-// Button Listeners (Prevent default behavior to stop context menus)
+// Button Listeners
 document.addEventListener('DOMContentLoaded', () => {
-    const btn = document.getElementById('mic-btn');
-    
     // Desktop
-    btn.addEventListener('mousedown', window.startRecording);
-    btn.addEventListener('mouseup', window.stopRecording);
-    
-    // Mobile - The 'preventDefault' is CRITICAL here
-    btn.addEventListener('touchstart', (e) => { 
+    micBtn.addEventListener('mousedown', window.startRecording);
+    micBtn.addEventListener('mouseup', window.stopRecording);
+    // Mobile
+    micBtn.addEventListener('touchstart', (e) => { 
         e.preventDefault(); 
         window.startRecording(); 
     }, {passive: false});
-    
-    btn.addEventListener('touchend', (e) => { 
+    micBtn.addEventListener('touchend', (e) => { 
         e.preventDefault(); 
         window.stopRecording(); 
     }, {passive: false});

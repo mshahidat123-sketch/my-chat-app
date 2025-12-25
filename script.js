@@ -22,40 +22,89 @@ let selectedChatUser = null;
 let unsubscribeMessages = null;
 let mediaRecorder = null;
 let audioChunks = [];
-let currentStream = null; // Store stream to turn it off later
+let uploadedAvatar = null;
+
+// --- IMAGE HANDLING (Compress Image) ---
+window.previewAvatar = (event) => {
+    const file = event.target.files[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (e) => {
+        // Create an image to resize it
+        const img = new Image();
+        img.src = e.target.result;
+        img.onload = () => {
+            const canvas = document.createElement('canvas');
+            const ctx = canvas.getContext('2d');
+            
+            // Resize to max 200x200px for speed
+            const maxSize = 200;
+            let width = img.width;
+            let height = img.height;
+            if (width > height) {
+                if (width > maxSize) { height *= maxSize / width; width = maxSize; }
+            } else {
+                if (height > maxSize) { width *= maxSize / height; height = maxSize; }
+            }
+            canvas.width = width;
+            canvas.height = height;
+            ctx.drawImage(img, 0, 0, width, height);
+            
+            // Get compressed Base64
+            uploadedAvatar = canvas.toDataURL('image/jpeg', 0.7);
+            document.getElementById('avatar-preview').src = uploadedAvatar;
+        };
+    };
+    reader.readAsDataURL(file);
+};
 
 // --- LOGIN LOGIC ---
 window.usernameLogin = async () => {
     const usernameInput = document.getElementById('login-username').value.trim();
     if (!usernameInput) return alert("Please enter a username");
     const btn = document.getElementById('login-btn');
-    btn.innerText = "Loading...";
+    btn.innerText = "Setting up...";
 
     try {
         const q = query(collection(db, "users"), where("username", "==", usernameInput.toLowerCase()));
         const snapshot = await getDocs(q);
 
+        let finalPhoto = uploadedAvatar || `https://ui-avatars.com/api/?name=${usernameInput}&background=random`;
+
         if (!snapshot.empty) {
-            snapshot.forEach(doc => currentUser = doc.data());
+            // User exists: Update their photo if they uploaded a new one
+            snapshot.forEach(async (d) => {
+                currentUser = d.data();
+                if (uploadedAvatar) {
+                    await updateDoc(doc(db, "users", currentUser.uid), { photoURL: uploadedAvatar });
+                    currentUser.photoURL = uploadedAvatar;
+                }
+            });
         } else {
+            // New User
             const newUid = "user_" + Date.now(); 
             const newUser = {
                 uid: newUid,
                 username: usernameInput.toLowerCase(),
                 displayName: usernameInput, 
-                photoURL: `https://ui-avatars.com/api/?name=${usernameInput}&background=random`,
+                photoURL: finalPhoto,
                 friends: []
             };
             await setDoc(doc(db, "users", newUid), newUser);
             currentUser = newUser;
         }
+
+        // UI Updates
+        document.getElementById('my-mini-avatar').src = currentUser.photoURL;
         document.getElementById('login-screen').classList.add('hidden');
         document.getElementById('app-screen').classList.remove('hidden');
         loadFriendsList();
+
     } catch (error) {
         console.error(error);
         alert("Error: " + error.message);
-        btn.innerText = "Enter";
+        btn.innerText = "Start Chatting";
     }
 };
 
@@ -95,7 +144,7 @@ function loadFriendsList() {
                 const div = document.createElement("div");
                 div.className = "p-3 border-b hover:bg-gray-50 cursor-pointer flex items-center gap-3 transition";
                 div.onclick = () => openChat(friend);
-                div.innerHTML = `<img src="${friend.photoURL}" class="w-10 h-10 rounded-full border"><div><p class="font-semibold text-gray-800 capitalize">${friend.displayName}</p></div>`;
+                div.innerHTML = `<img src="${friend.photoURL}" class="w-12 h-12 rounded-full border object-cover"><div><p class="font-semibold text-gray-800 capitalize">${friend.displayName}</p></div>`;
                 friendListEl.appendChild(div);
             }
         }
@@ -168,27 +217,20 @@ window.sendMessage = async () => {
     input.value = "";
 };
 
-// --- IMPROVED VOICE RECORDING ---
+// --- VOICE RECORDING ---
 const micBtn = document.getElementById('mic-btn');
 
 window.startRecording = async () => {
-    // 1. Ask for Mic permission only when button is pressed
     try {
         const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-        currentStream = stream;
-        
         mediaRecorder = new MediaRecorder(stream);
         audioChunks = [];
-
         mediaRecorder.ondataavailable = e => audioChunks.push(e.data);
 
         mediaRecorder.onstop = async () => {
-            // Stop the hardware mic completely
             stream.getTracks().forEach(track => track.stop());
-            
             if(audioChunks.length === 0) return;
             const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
-            
             const reader = new FileReader();
             reader.readAsDataURL(audioBlob);
             reader.onloadend = async () => {
@@ -200,14 +242,9 @@ window.startRecording = async () => {
                 });
             };
         };
-
         mediaRecorder.start();
         micBtn.classList.add('recording-anim');
-
-    } catch (err) {
-        alert("Microphone permission denied.");
-        console.error(err);
-    }
+    } catch (err) { alert("Microphone permission denied."); }
 };
 
 window.stopRecording = () => {
@@ -217,19 +254,10 @@ window.stopRecording = () => {
     }
 };
 
-// Button Listeners
 document.addEventListener('DOMContentLoaded', () => {
-    // Desktop
     micBtn.addEventListener('mousedown', window.startRecording);
     micBtn.addEventListener('mouseup', window.stopRecording);
-    // Mobile
-    micBtn.addEventListener('touchstart', (e) => { 
-        e.preventDefault(); 
-        window.startRecording(); 
-    }, {passive: false});
-    micBtn.addEventListener('touchend', (e) => { 
-        e.preventDefault(); 
-        window.stopRecording(); 
-    }, {passive: false});
+    micBtn.addEventListener('touchstart', (e) => { e.preventDefault(); window.startRecording(); }, {passive: false});
+    micBtn.addEventListener('touchend', (e) => { e.preventDefault(); window.stopRecording(); }, {passive: false});
 });
 

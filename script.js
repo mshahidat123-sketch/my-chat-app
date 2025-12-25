@@ -3,7 +3,7 @@ import { getFirestore, collection, addDoc, setDoc, getDocs, doc, query, where, o
 from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
 
 // ==========================================
-// 🔴 IMPORTANT: PASTE YOUR KEYS HERE AGAIN 🔴
+// 🔴 FIREBASE CONFIGURATION 🔴
 // ==========================================
 const firebaseConfig = {
     apiKey: "AIzaSyAo_QQ_3i_GmQsyi3tTUWwmJK09z_Y3sNM",
@@ -89,7 +89,7 @@ getEl('login-btn').addEventListener('click', async () => {
 
     } catch (err) {
         console.error(err);
-        alert("LOGIN ERROR: " + err.message); // <--- DEBUG ALERT
+        alert("LOGIN ERROR: " + err.message);
         getEl('login-btn').innerText = "Enter Shotta";
         getEl('login-btn').disabled = false;
     }
@@ -176,9 +176,13 @@ function loadFriendsList() {
                     listEl.appendChild(card);
                 }
 
+                // Update Header if chatting with this user
                 if (selectedChatUser && selectedChatUser.uid === fData.uid) {
-                    getEl('chat-header-status').innerText = isOnline ? "Online" : "Offline";
-                    getEl('chat-header-status').className = isOnline ? "text-xs text-green-500 font-bold" : "text-xs text-gray-500";
+                    const statusEl = getEl('chat-header-status');
+                    if(statusEl) {
+                        statusEl.innerText = isOnline ? "Online" : "Offline";
+                        statusEl.className = isOnline ? "text-xs text-green-500 font-bold" : "text-xs text-gray-500";
+                    }
                 }
             });
             friendListeners.push(unsub);
@@ -197,9 +201,13 @@ window.openChat = (friend, verifiedPhoto) => {
     getEl('chat-header-name').innerText = friend.displayName;
     getEl('chat-header-img').src = verifiedPhoto || friend.photoURL;
     
+    // Status update (Safety check added)
     const isOnline = friend.isOnline === true;
-    getEl('chat-header-status').innerText = isOnline ? "Online" : "Offline";
-    getEl('chat-header-status').className = isOnline ? "text-xs text-green-500 font-bold" : "text-xs text-gray-500";
+    const statusEl = getEl('chat-header-status');
+    if(statusEl) {
+        statusEl.innerText = isOnline ? "Online" : "Offline";
+        statusEl.className = isOnline ? "text-xs text-green-500 font-bold" : "text-xs text-gray-500";
+    }
 
     loadMessages();
 };
@@ -217,48 +225,74 @@ function getChatID() {
     return [currentUser.uid, selectedChatUser.uid].sort().join("_");
 }
 
+// --- FIX: UPDATED LOAD MESSAGES ---
 function loadMessages() {
     if (unsubscribeMessages) unsubscribeMessages();
+    
+    // Create query
     const q = query(collection(db, "chats", getChatID(), "messages"), orderBy("createdAt", "asc"));
     
     unsubscribeMessages = onSnapshot(q, (snapshot) => {
         const list = getEl('msg-list');
         list.innerHTML = "";
         
+        if (snapshot.empty) {
+            list.innerHTML = `<div class="text-center text-gray-600 mt-10 text-xs">No messages yet. Say hi! 👋</div>`;
+            return;
+        }
+
         snapshot.forEach(doc => {
             const data = doc.data();
             const isMe = data.senderId === currentUser.uid;
-            const div = document.createElement("div");
-            div.className = `flex ${isMe ? 'justify-end' : 'justify-start'}`;
             
-            let content = "";
-            if (data.type === "audio") {
-                content = `<audio controls src="${data.content}" class="h-8 w-48"></audio>`;
-            } else {
-                content = `<p class="break-words">${data.content}</p>`;
+            // 1. SAFELY HANDLE TIME (Fixes "ghost" messages)
+            let timeString = "...";
+            if (data.createdAt && data.createdAt.seconds) {
+                timeString = new Date(data.createdAt.seconds * 1000).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
+            } else if (!data.createdAt) {
+                timeString = "Sending...";
             }
 
+            // 2. BUILD CONTENT (Audio vs Text)
+            let contentHtml = "";
+            if (data.type === "audio") {
+                contentHtml = `
+                    <div class="flex items-center gap-2">
+                        <span class="text-xs">🎤 Voice</span>
+                        <audio controls src="${data.content}" class="h-8 w-48 rounded bg-transparent"></audio>
+                    </div>`;
+            } else {
+                contentHtml = `<p class="break-words">${data.content}</p>`;
+            }
+
+            // 3. CREATE MESSAGE BUBBLE
+            const div = document.createElement("div");
+            div.className = `flex w-full ${isMe ? 'justify-end' : 'justify-start'} mb-4`;
+            
             div.innerHTML = `
-                <div class="max-w-[75%] p-3 rounded-2xl text-sm shadow-sm ${isMe ? 'bg-green-600 text-black rounded-tr-none' : 'bg-gray-800 text-white rounded-tl-none'}">
-                    ${content}
-                    <p class="text-[9px] opacity-50 text-right mt-1">
-                        ${data.createdAt ? new Date(data.createdAt.seconds * 1000).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}) : '...'}
+                <div class="max-w-[75%] p-3 rounded-2xl text-sm shadow-sm relative group ${isMe ? 'bg-green-600 text-black rounded-tr-none' : 'bg-gray-800 text-white rounded-tl-none'}">
+                    ${contentHtml}
+                    <p class="text-[9px] opacity-60 text-right mt-1 font-mono">
+                        ${timeString}
                     </p>
                 </div>
             `;
             list.appendChild(div);
         });
-        setTimeout(() => list.scrollTop = list.scrollHeight, 100);
+
+        // Scroll to bottom
+        setTimeout(() => {
+            list.scrollTop = list.scrollHeight;
+        }, 100);
     });
 }
 
-// --- 6. SENDING LOGIC (WITH DEBUGGING) ---
+// --- 6. SENDING LOGIC ---
 getEl('send-btn').addEventListener('click', async () => {
     const input = getEl('msg-input');
     const text = input.value.trim();
     if (!text || !selectedChatUser) return;
     
-    // DEBUG: Try-Catch Block
     try {
         await addDoc(collection(db, "chats", getChatID(), "messages"), {
             content: text, 
@@ -266,21 +300,20 @@ getEl('send-btn').addEventListener('click', async () => {
             createdAt: serverTimestamp(), 
             type: "text"
         });
-        input.value = ""; // Clear input ONLY if successful
+        input.value = "";
         getEl('msg-list').scrollTop = getEl('msg-list').scrollHeight;
     } catch (e) {
         console.error(e);
-        alert("SEND FAILED: " + e.message); // <--- THIS WILL TELL YOU THE PROBLEM
+        alert("SEND FAILED: " + e.message);
     }
 });
 
-// --- AUDIO LOGIC (WITH DEBUGGING) ---
+// --- AUDIO LOGIC (FIXED) ---
 const micBtn = getEl('mic-btn');
 
 const startRecording = async () => {
-    // SECURITY CHECK
     if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-        return alert("MICROPHONE ERROR: Your browser is blocking the mic. You must use 'localhost' or HTTPS.");
+        return alert("MICROPHONE ERROR: Your browser is blocking the mic. Use 'localhost' or HTTPS.");
     }
 
     try {
@@ -292,12 +325,15 @@ const startRecording = async () => {
         
         mediaRecorder.onstop = async () => {
             stream.getTracks().forEach(t => t.stop());
+            
+            // FIX: Use correct mime type for blob
             const blob = new Blob(audioChunks, { type: 'audio/webm' });
+            
             const reader = new FileReader();
             reader.readAsDataURL(blob);
             reader.onloadend = async () => {
                 const base64 = reader.result;
-                if(base64.length > 800000) return alert("Audio too long!");
+                if(base64.length > 800000) return alert("Voice note too long! Keep it under 10s.");
                 
                 try {
                     await addDoc(collection(db, "chats", getChatID(), "messages"), {
@@ -326,8 +362,17 @@ const stopRecording = () => {
     }
 };
 
+// Mouse Events
 micBtn.addEventListener('mousedown', startRecording);
 micBtn.addEventListener('mouseup', stopRecording);
-micBtn.addEventListener('touchstart', (e) => { e.preventDefault(); startRecording(); });
-micBtn.addEventListener('touchend', (e) => { e.preventDefault(); stopRecording(); });
+
+// Touch Events (Mobile)
+micBtn.addEventListener('touchstart', (e) => { 
+    e.preventDefault(); // Prevents mouse emulation
+    startRecording(); 
+});
+micBtn.addEventListener('touchend', (e) => { 
+    e.preventDefault(); 
+    stopRecording(); 
+});
 

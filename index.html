@@ -1,3 +1,17 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>InstaChat</title>
+    
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="style.css">
+</head>
+<body class="bg-gray-100 h-[100dvh] w-full overflow-hidden font-[Inter]">
+
     <div id="login-screen" class="h-full flex flex-col justify-center items-center p-4">
         <div class="bg-white p-8 rounded-2xl shadow-xl w-full max-w-sm text-center">
             <h1 class="text-3xl font-bold mb-2 text-blue-600">InstaChat</h1>
@@ -9,8 +23,10 @@
                         <span id="avatar-text" class="text-xs text-gray-400">Tap to<br>Upload</span>
                         <img id="avatar-img" class="hidden w-full h-full object-cover">
                     </div>
-                    <div class="absolute bottom-0 right-0 bg-blue-600 text-white rounded-full p-1 shadow-md">
-                        <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M4 5a2 2 0 00-2 2v8a2 2 0 002 2h12a2 2 0 002-2V7a2 2 0 00-2-2h-1.586a1 1 0 01-.707-.293l-1.121-1.121A2 2 0 0011.172 3H8.828a2 2 0 00-1.414.586L6.293 4.707A1 1 0 015.586 5H4zm6 9a3 3 0 100-6 3 3 0 000 6z" clip-rule="evenodd" /></svg>
+                    <div class="absolute bottom-0 right-0 bg-blue-600 text-white rounded-full p-2 shadow-md">
+                        <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
+                            <path fill-rule="evenodd" d="M4 5a2 2 0 00-2 2v8a2 2 0 002 2h12a2 2 0 002-2V7a2 2 0 00-2-2h-1.586a1 1 0 01-.707-.293l-1.121-1.121A2 2 0 0011.172 3H8.828a2 2 0 00-1.414.586L6.293 4.707A1 1 0 015.586 5H4zm6 9a3 3 0 100-6 3 3 0 000 6z" clip-rule="evenodd" />
+                        </svg>
                     </div>
                 </label>
                 <input type="file" id="avatar-input" accept="image/*" class="hidden" onchange="previewAvatar()">
@@ -20,4 +36,47 @@
             <button id="login-btn" onclick="usernameLogin()" class="w-full bg-blue-600 text-white p-3 rounded-lg font-bold hover:bg-blue-700 transition">Enter</button>
         </div>
     </div>
+
+    <div id="app-screen" class="hidden h-full w-full flex relative">
+        <div id="sidebar" class="w-full md:w-1/3 bg-white border-r flex flex-col h-full z-10">
+            <div class="p-4 bg-gray-50 border-b flex justify-between items-center shadow-sm shrink-0">
+                <h2 class="font-bold text-xl">Chats</h2>
+                <div class="flex gap-2">
+                    <button onclick="addFriend()" class="bg-blue-100 text-blue-600 p-2 rounded-full hover:bg-blue-200">
+                        <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M10 3a1 1 0 011 1v5h5a1 1 0 110 2h-5v5a1 1 0 11-2 0v-5H4a1 1 0 110-2h5V4a1 1 0 011-1z" clip-rule="evenodd" /></svg>
+                    </button>
+                    <button onclick="logout()" class="text-red-500 text-sm font-semibold">Exit</button>
+                </div>
+            </div>
+            <div id="friend-list" class="flex-1 overflow-y-auto"></div>
+        </div>
+
+        <div id="chat-area" class="hidden md:flex w-full md:w-2/3 flex-col bg-white h-full z-20">
+            <div class="p-3 border-b flex items-center gap-3 bg-white shadow-sm shrink-0">
+                <button onclick="backToList()" class="md:hidden p-2 text-gray-600">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7" /></svg>
+                </button>
+                <img id="chat-header-img" class="w-10 h-10 rounded-full border object-cover">
+                <h2 id="chat-header-name" class="font-bold text-gray-800 capitalize">User</h2>
+            </div>
+
+            <div id="msg-list" class="flex-1 p-4 overflow-y-auto bg-slate-50 w-full"></div>
+
+            <div class="p-2 bg-white border-t flex gap-2 items-center shrink-0 w-full max-w-full">
+                <input id="msg-input" type="text" placeholder="Message..." class="flex-1 min-w-0 p-3 bg-gray-100 rounded-full focus:outline-none focus:ring-1 focus:ring-blue-500">
+                
+                <button onclick="sendMessage()" class="text-blue-600 p-2 rounded-full hover:bg-blue-50 shrink-0">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" /></svg>
+                </button>
+                
+                <button id="mic-btn" oncontextmenu="return false;" class="bg-gray-200 text-gray-600 p-3 rounded-full transition shadow-lg active:scale-95 select-none touch-none shrink-0">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M7 4a3 3 0 016 0v4a3 3 0 11-6 0V4zm4 10.93A7.001 7.001 0 0017 8a1 1 0 10-2 0A5 5 0 015 8a1 1 0 00-2 0 7.001 7.001 0 006 6.93V17H6a1 1 0 100 2h8a1 1 0 100-2h-3v-2.07z" clip-rule="evenodd" /></svg>
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <script type="module" src="script.js"></script>
+</body>
+</html>
 

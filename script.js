@@ -2,262 +2,288 @@ import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.1/firebas
 import { getFirestore, collection, addDoc, setDoc, getDocs, doc, query, where, orderBy, onSnapshot, serverTimestamp, updateDoc, arrayUnion, getDoc } 
 from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
 
-// --- PASTE YOUR FIREBASE CONFIG HERE ---
-// (Go to console.firebase.google.com to get these details)
+// ============================================
+// 1. CONFIGURATION (REPLACE THIS SECTION!)
+// ============================================
 const firebaseConfig = {
-    apiKey: "AIzaSyAo_QQ_3i_GmQsyi3tTUWwmJK09z_Y3sNM",
-  authDomain: "chatapp-e007a.firebaseapp.com",
-  projectId: "chatapp-e007a",
-  storageBucket: "chatapp-e007a.firebasestorage.app",
-  messagingSenderId: "853709166914",
-  appId: "1:853709166914:web:21f0bb1b8e03a796b010db",
-  measurementId: "G-X6S69KD32H"
+    apiKey: "YOUR_API_KEY",
+    authDomain: "YOUR_PROJECT.firebaseapp.com",
+    projectId: "YOUR_PROJECT_ID",
+    storageBucket: "YOUR_PROJECT.appspot.com",
+    messagingSenderId: "NUMBERS",
+    appId: "NUMBERS"
 };
-// ----------------------------------------
 
 const app = initializeApp(firebaseConfig);
 const db = getFirestore(app);
 
-// --- STATE VARIABLES ---
+// ============================================
+// 2. STATE MANAGEMENT
+// ============================================
 let currentUser = null;
 let selectedChatUser = null;
 let unsubscribeMessages = null;
 let mediaRecorder = null;
 let audioChunks = [];
-let currentStream = null;
-let selectedAvatarBase64 = null; // NEW: Stores the uploaded logo
+let selectedAvatarBase64 = null;
 
-// --- NEW: AVATAR PREVIEW FUNCTION ---
-window.previewAvatar = () => {
-    const file = document.getElementById('avatar-input').files[0];
+// ============================================
+// 3. UI HELPER FUNCTIONS
+// ============================================
+const getEl = (id) => document.getElementById(id);
+
+// --- Handle Avatar Upload Preview ---
+getEl('avatar-input').addEventListener('change', (e) => {
+    const file = e.target.files[0];
     if (file) {
-        // Limit file size to 100KB to keep the database fast
-        if (file.size > 100000) {
-            alert("File is too big! Please use a smaller image (under 100KB).");
-            return;
-        }
+        if (file.size > 150000) return alert("Image too large! Use < 150KB"); // 150KB Limit
         const reader = new FileReader();
-        reader.onload = (e) => {
-            selectedAvatarBase64 = e.target.result;
-            // Update the circle on the screen
-            document.getElementById('avatar-img').src = selectedAvatarBase64;
-            document.getElementById('avatar-img').classList.remove('hidden');
-            document.getElementById('avatar-text').classList.add('hidden');
+        reader.onload = (ev) => {
+            selectedAvatarBase64 = ev.target.result;
+            getEl('avatar-preview-img').src = selectedAvatarBase64;
+            getEl('avatar-preview-img').classList.remove('opacity-50');
+            getEl('avatar-overlay').classList.add('hidden');
         };
         reader.readAsDataURL(file);
     }
-};
+});
 
-// --- UPDATED LOGIN LOGIC ---
-window.usernameLogin = async () => {
-    const usernameInput = document.getElementById('login-username').value.trim();
-    if (!usernameInput) return alert("Please enter a username");
-    const btn = document.getElementById('login-btn');
-    btn.innerText = "Loading...";
+// ============================================
+// 4. AUTHENTICATION & LOGIN
+// ============================================
+getEl('login-btn').addEventListener('click', async () => {
+    const username = getEl('login-username').value.trim().toLowerCase();
+    if (!username) return alert("Please enter a username");
+    
+    const btn = getEl('login-btn');
+    btn.innerText = "Authenticating...";
+    btn.disabled = true;
 
     try {
-        const q = query(collection(db, "users"), where("username", "==", usernameInput.toLowerCase()));
+        const q = query(collection(db, "users"), where("username", "==", username));
         const snapshot = await getDocs(q);
 
         if (!snapshot.empty) {
-            // User Exists
+            // Login existing
             snapshot.forEach(doc => currentUser = doc.data());
         } else {
-            // New User Registration
-            const newUid = "user_" + Date.now(); 
+            // Register new
+            const newUid = "u_" + Date.now();
+            const avatar = selectedAvatarBase64 || `https://ui-avatars.com/api/?name=${username}&background=22c55e&color=000`;
             
-            // Check if they uploaded a logo, otherwise generate a random one
-            const finalPhoto = selectedAvatarBase64 || `https://ui-avatars.com/api/?name=${usernameInput}&background=random`;
-
             const newUser = {
                 uid: newUid,
-                username: usernameInput.toLowerCase(),
-                displayName: usernameInput, 
-                photoURL: finalPhoto,
-                friends: []
+                username: username,
+                displayName: username,
+                photoURL: avatar,
+                friends: [],
+                createdAt: serverTimestamp()
             };
             await setDoc(doc(db, "users", newUid), newUser);
             currentUser = newUser;
         }
-        document.getElementById('login-screen').classList.add('hidden');
-        document.getElementById('app-screen').classList.remove('hidden');
+
+        // Transition UI
+        getEl('login-screen').classList.add('hidden');
+        getEl('app-screen').classList.remove('hidden');
+        getEl('my-avatar').src = currentUser.photoURL;
         loadFriendsList();
-    } catch (error) {
-        console.error(error);
-        alert("Error: " + error.message);
-        btn.innerText = "Enter";
+
+    } catch (err) {
+        console.error(err);
+        alert("Login Error: " + err.message);
+        btn.innerText = "Start Messaging";
+        btn.disabled = false;
     }
-};
+});
 
-window.logout = () => location.reload();
-
-// --- FRIEND SYSTEM ---
-window.addFriend = async () => {
-    const input = prompt("Enter the exact Username to add:");
+// ============================================
+// 5. FRIEND SYSTEM
+// ============================================
+getEl('add-friend-btn').addEventListener('click', async () => {
+    const input = prompt("Enter exact username to add:");
     if (!input) return;
-    const q = query(collection(db, "users"), where("username", "==", input.toLowerCase()));
+    
+    const q = query(collection(db, "users"), where("username", "==", input.toLowerCase().trim()));
     const snapshot = await getDocs(q);
 
-    if (snapshot.empty) {
-        alert("User not found!");
-    } else {
-        let friendData = null;
-        snapshot.forEach(doc => friendData = doc.data());
-        if (friendData.uid === currentUser.uid) return alert("You cannot add yourself.");
-        await updateDoc(doc(db, "users", currentUser.uid), { friends: arrayUnion(friendData.uid) });
-        alert("Friend added!");
-    }
-};
+    if (snapshot.empty) return alert("User not found.");
+    
+    let friendID = null;
+    snapshot.forEach(doc => friendID = doc.data().uid);
+    
+    if (friendID === currentUser.uid) return alert("Can't add yourself.");
+    
+    await updateDoc(doc(db, "users", currentUser.uid), { 
+        friends: arrayUnion(friendID) 
+    });
+});
 
 function loadFriendsList() {
     onSnapshot(doc(db, "users", currentUser.uid), async (docSnap) => {
-        const myData = docSnap.data();
-        const friendListEl = document.getElementById('friend-list');
-        friendListEl.innerHTML = "";
-        if (!myData || !myData.friends || myData.friends.length === 0) {
-            friendListEl.innerHTML = `<div class="p-4 text-center text-gray-500 text-sm">No friends yet.<br>Click "+" to search!</div>`;
+        const data = docSnap.data();
+        const listEl = getEl('friend-list');
+        listEl.innerHTML = "";
+        
+        if (!data?.friends?.length) {
+            listEl.innerHTML = `<div class="text-center text-gray-600 mt-10 text-sm">No chats yet.<br>Click + to add friends.</div>`;
             return;
         }
-        for (const friendUid of myData.friends) {
-            const friendSnap = await getDoc(doc(db, "users", friendUid));
-            if (friendSnap.exists()) {
-                const friend = friendSnap.data();
+
+        for (const uid of data.friends) {
+            const fSnap = await getDoc(doc(db, "users", uid));
+            if (fSnap.exists()) {
+                const fData = fSnap.data();
                 const div = document.createElement("div");
-                div.className = "p-3 border-b hover:bg-gray-50 cursor-pointer flex items-center gap-3 transition";
-                div.onclick = () => openChat(friend);
-                div.innerHTML = `<img src="${friend.photoURL}" class="w-10 h-10 rounded-full border object-cover"><div><p class="font-semibold text-gray-800 capitalize">${friend.displayName}</p></div>`;
-                friendListEl.appendChild(div);
+                div.className = "p-3 rounded-xl hover:bg-gray-800/50 cursor-pointer flex items-center gap-3 transition group";
+                div.onclick = () => openChat(fData);
+                div.innerHTML = `
+                    <div class="relative">
+                        <img src="${fData.photoURL}" class="w-12 h-12 rounded-full border border-gray-700 object-cover group-hover:border-green-500 transition">
+                        <div class="absolute bottom-0 right-0 w-3 h-3 bg-green-500 rounded-full border-2 border-black"></div>
+                    </div>
+                    <div>
+                        <p class="font-bold text-gray-200 capitalize group-hover:text-green-400 transition">${fData.displayName}</p>
+                        <p class="text-xs text-gray-500">Tap to chat</p>
+                    </div>
+                `;
+                listEl.appendChild(div);
             }
         }
     });
 }
 
-// --- CHAT UI ---
+// ============================================
+// 6. CHAT LOGIC
+// ============================================
 window.openChat = (friend) => {
     selectedChatUser = friend;
-    document.getElementById('sidebar').classList.add('hidden');
-    document.getElementById('sidebar').classList.remove('flex');
-    document.getElementById('chat-area').classList.remove('hidden');
-    document.getElementById('chat-area').classList.add('flex');
-    document.getElementById('chat-header-name').innerText = friend.displayName;
-    document.getElementById('chat-header-img').src = friend.photoURL;
+    
+    // UI Toggle for Mobile
+    getEl('sidebar').classList.add('hidden');
+    getEl('sidebar').classList.remove('flex'); // Fix for flex layout
+    getEl('chat-area').classList.remove('hidden');
+    getEl('chat-area').classList.add('flex');
+
+    // Set Header
+    getEl('chat-header-name').innerText = friend.displayName;
+    getEl('chat-header-img').src = friend.photoURL;
+
     loadMessages();
 };
 
-window.backToList = () => {
+getEl('back-btn').addEventListener('click', () => {
     selectedChatUser = null;
     if (unsubscribeMessages) unsubscribeMessages();
-    document.getElementById('sidebar').classList.remove('hidden');
-    document.getElementById('sidebar').classList.add('flex');
-    document.getElementById('chat-area').classList.add('hidden');
-    document.getElementById('chat-area').classList.remove('flex');
-};
+    getEl('sidebar').classList.remove('hidden');
+    getEl('sidebar').classList.add('flex');
+    getEl('chat-area').classList.add('hidden');
+    getEl('chat-area').classList.remove('flex');
+});
 
-// --- MESSAGING ---
 function getChatID() {
-    const ids = [currentUser.uid, selectedChatUser.uid].sort();
-    return ids[0] + "_" + ids[1];
+    return [currentUser.uid, selectedChatUser.uid].sort().join("_");
 }
 
 function loadMessages() {
     if (unsubscribeMessages) unsubscribeMessages();
-    const chatID = getChatID();
-    const q = query(collection(db, "chats", chatID, "messages"), orderBy("createdAt"));
-    const msgList = document.getElementById('msg-list');
-
+    const q = query(collection(db, "chats", getChatID(), "messages"), orderBy("createdAt", "asc"));
+    
     unsubscribeMessages = onSnapshot(q, (snapshot) => {
-        msgList.innerHTML = "";
+        const list = getEl('msg-list');
+        list.innerHTML = "";
+        
         snapshot.forEach(doc => {
             const data = doc.data();
             const isMe = data.senderId === currentUser.uid;
-            const msgDiv = document.createElement("div");
-            msgDiv.className = `flex ${isMe ? 'justify-end' : 'justify-start'} mb-2`;
+            
+            const div = document.createElement("div");
+            div.className = `flex ${isMe ? 'justify-end' : 'justify-start'}`;
             
             let content = "";
             if (data.type === "audio") {
-                content = `<audio controls src="${data.audioData}" class="h-8 w-48"></audio>`;
+                content = `<audio controls src="${data.content}" class="h-8 w-48 custom-audio"></audio>`;
             } else {
-                content = data.text;
+                content = `<p>${data.content}</p>`;
             }
 
-            msgDiv.innerHTML = `<div class="px-3 py-2 rounded-2xl max-w-[85%] text-sm ${isMe ? 'bg-blue-600 text-white' : 'bg-gray-200 text-black'} shadow-sm">${content}</div>`;
-            msgList.appendChild(msgDiv);
+            div.innerHTML = `
+                <div class="max-w-[80%] p-3 rounded-2xl text-sm ${isMe ? 'bg-green-600 text-black rounded-tr-none' : 'bg-gray-800 text-white rounded-tl-none'}">
+                    ${content}
+                </div>
+            `;
+            list.appendChild(div);
         });
-        msgList.scrollTop = msgList.scrollHeight;
+        list.scrollTop = list.scrollHeight;
     });
 }
 
-window.sendMessage = async () => {
-    const input = document.getElementById('msg-input');
+// ============================================
+// 7. SENDING MESSAGES (TEXT & AUDIO)
+// ============================================
+getEl('send-btn').addEventListener('click', async () => {
+    const input = getEl('msg-input');
     const text = input.value.trim();
     if (!text || !selectedChatUser) return;
-    const chatID = getChatID();
-    await addDoc(collection(db, "chats", chatID, "messages"), {
-        text: text, senderId: currentUser.uid, createdAt: serverTimestamp(), type: "text"
+    
+    await addDoc(collection(db, "chats", getChatID(), "messages"), {
+        content: text,
+        senderId: currentUser.uid,
+        createdAt: serverTimestamp(),
+        type: "text"
     });
     input.value = "";
-};
+});
 
-// --- VOICE RECORDING ---
-const micBtn = document.getElementById('mic-btn');
+// Audio Recording
+const micBtn = getEl('mic-btn');
 
-window.startRecording = async () => {
+const startRecording = async () => {
     try {
         const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-        currentStream = stream;
-        
         mediaRecorder = new MediaRecorder(stream);
         audioChunks = [];
-
+        
         mediaRecorder.ondataavailable = e => audioChunks.push(e.data);
-
+        
         mediaRecorder.onstop = async () => {
-            stream.getTracks().forEach(track => track.stop());
-            
-            if(audioChunks.length === 0) return;
-            const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
-            
+            stream.getTracks().forEach(t => t.stop());
+            const blob = new Blob(audioChunks, { type: 'audio/webm' });
             const reader = new FileReader();
-            reader.readAsDataURL(audioBlob);
+            reader.readAsDataURL(blob);
             reader.onloadend = async () => {
-                const base64Audio = reader.result;
-                if(base64Audio.length > 900000) { alert("Voice note too long!"); return; }
-                const chatID = getChatID();
-                await addDoc(collection(db, "chats", chatID, "messages"), {
-                    audioData: base64Audio, senderId: currentUser.uid, createdAt: serverTimestamp(), type: "audio"
+                const base64 = reader.result;
+                if(base64.length > 500000) return alert("Audio too long!");
+                
+                await addDoc(collection(db, "chats", getChatID(), "messages"), {
+                    content: base64,
+                    senderId: currentUser.uid,
+                    createdAt: serverTimestamp(),
+                    type: "audio"
                 });
             };
         };
-
+        
         mediaRecorder.start();
-        micBtn.classList.add('recording-anim');
-
-    } catch (err) {
-        alert("Microphone permission denied.");
-        console.error(err);
+        micBtn.classList.add('recording-pulse');
+    } catch(e) {
+        console.error(e);
+        alert("Mic permission denied");
     }
 };
 
-window.stopRecording = () => {
-    if(mediaRecorder && mediaRecorder.state === "recording") {
+const stopRecording = () => {
+    if (mediaRecorder && mediaRecorder.state === "recording") {
         mediaRecorder.stop();
-        micBtn.classList.remove('recording-anim');
+        micBtn.classList.remove('recording-pulse');
     }
 };
 
-// Button Listeners
-document.addEventListener('DOMContentLoaded', () => {
-    // Desktop
-    micBtn.addEventListener('mousedown', window.startRecording);
-    micBtn.addEventListener('mouseup', window.stopRecording);
-    // Mobile
-    micBtn.addEventListener('touchstart', (e) => { 
-        e.preventDefault(); 
-        window.startRecording(); 
-    }, {passive: false});
-    micBtn.addEventListener('touchend', (e) => { 
-        e.preventDefault(); 
-        window.stopRecording(); 
-    }, {passive: false});
-});
+// Mouse & Touch Events for Mic
+micBtn.addEventListener('mousedown', startRecording);
+micBtn.addEventListener('mouseup', stopRecording);
+micBtn.addEventListener('mouseleave', stopRecording);
+micBtn.addEventListener('touchstart', (e) => { e.preventDefault(); startRecording(); });
+micBtn.addEventListener('touchend', (e) => { e.preventDefault(); stopRecording(); });
+getEl('logout-btn').addEventListener('click', () => location.reload());
 

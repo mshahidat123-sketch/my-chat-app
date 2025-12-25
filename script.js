@@ -3,7 +3,7 @@ import { getFirestore, collection, addDoc, setDoc, getDocs, doc, query, where, o
 from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
 
 // ==========================================
-// PASTE YOUR FIREBASE CONFIG HERE
+// 🔴 IMPORTANT: PASTE YOUR KEYS HERE AGAIN 🔴
 // ==========================================
 const firebaseConfig = {
     apiKey: "AIzaSyAo_QQ_3i_GmQsyi3tTUWwmJK09z_Y3sNM",
@@ -14,6 +14,7 @@ const firebaseConfig = {
     appId: "1:853709166914:web:21f0bb1b8e03a796b010db"
 };
 
+// Initialize Firebase
 const app = initializeApp(firebaseConfig);
 const db = getFirestore(app);
 
@@ -28,13 +29,11 @@ let selectedAvatarBase64 = null;
 
 const getEl = (id) => document.getElementById(id);
 
-// --- 1. AVATAR UPLOAD PREVIEW ---
+// --- 1. AVATAR UPLOAD ---
 getEl('avatar-input').addEventListener('change', (e) => {
     const file = e.target.files[0];
     if (file) {
-        // Limit to 100KB to ensure Firestore can save it and others can load it fast
-        if (file.size > 100000) return alert("Image too large! Please use a smaller image.");
-        
+        if (file.size > 100000) return alert("Image too big! Max 100KB.");
         const reader = new FileReader();
         reader.onload = (ev) => {
             selectedAvatarBase64 = ev.target.result;
@@ -45,7 +44,7 @@ getEl('avatar-input').addEventListener('change', (e) => {
     }
 });
 
-// --- 2. LOGIN / REGISTER ---
+// --- 2. LOGIN ---
 getEl('login-btn').addEventListener('click', async () => {
     const username = getEl('login-username').value.trim().toLowerCase();
     if (!username) return alert("Enter a username");
@@ -58,27 +57,19 @@ getEl('login-btn').addEventListener('click', async () => {
         const snapshot = await getDocs(q);
 
         if (!snapshot.empty) {
-            // --- LOGIN EXISTING USER ---
             snapshot.forEach(doc => currentUser = doc.data());
-            
-            // If they just uploaded a new photo, update it in the database
             if (selectedAvatarBase64) {
                 await updateDoc(doc(db, "users", currentUser.uid), { photoURL: selectedAvatarBase64 });
                 currentUser.photoURL = selectedAvatarBase64;
             }
         } else {
-            // --- REGISTER NEW USER ---
             const newUid = "u_" + Date.now();
-            
-            // Default Avatar (Initials) if no photo uploaded
             const defaultAvatar = `https://ui-avatars.com/api/?name=${username}&background=22c55e&color=000`;
-            const finalAvatar = selectedAvatarBase64 || defaultAvatar;
-
             const newUser = {
                 uid: newUid,
                 username: username,
                 displayName: username,
-                photoURL: finalAvatar,
+                photoURL: selectedAvatarBase64 || defaultAvatar,
                 friends: [],
                 isOnline: true,
                 createdAt: serverTimestamp()
@@ -87,77 +78,56 @@ getEl('login-btn').addEventListener('click', async () => {
             currentUser = newUser;
         }
 
-        // Set Online Status immediately
         await updateDoc(doc(db, "users", currentUser.uid), { isOnline: true });
 
-        // Switch Screens
         getEl('login-screen').classList.add('hidden');
         getEl('app-screen').classList.remove('hidden');
-        
-        // Load MY Profile Pic (with fallback)
-        getEl('my-avatar').src = currentUser.photoURL || `https://ui-avatars.com/api/?name=${currentUser.username}`;
+        getEl('my-avatar').src = currentUser.photoURL;
         
         loadFriendsList();
         setupPresenceSystem();
 
     } catch (err) {
         console.error(err);
-        alert("Login failed: " + err.message);
+        alert("LOGIN ERROR: " + err.message); // <--- DEBUG ALERT
         getEl('login-btn').innerText = "Enter Shotta";
         getEl('login-btn').disabled = false;
     }
 });
 
-// --- 3. FIX: ROBUST ONLINE/OFFLINE SYSTEM ---
+// --- 3. ONLINE STATUS ---
 function setupPresenceSystem() {
-    // 1. If tab is closed or reloaded
-    window.addEventListener('beforeunload', () => {
-        setOffline();
-    });
-
-    // 2. If user switches tabs or minimizes app (Mobile Fix)
+    window.addEventListener('beforeunload', () => setOffline());
     document.addEventListener('visibilitychange', () => {
-        if (document.visibilityState === 'visible') {
-            updateDoc(doc(db, "users", currentUser.uid), { isOnline: true });
-        } else {
-            setOffline();
+        if (currentUser) {
+            const status = document.visibilityState === 'visible';
+            updateDoc(doc(db, "users", currentUser.uid), { isOnline: status });
         }
     });
 }
-
 async function setOffline() {
-    if (currentUser) {
-        // We use Beacon API for reliability on page close
-        const data = new Blob([JSON.stringify({ isOnline: false })], { type: 'application/json; charset=UTF-8' });
-        // Note: Firestore doesn't support sendBeacon natively easily, so we try standard update
-        // The visibilitychange listener handles 90% of mobile cases
-        await updateDoc(doc(db, "users", currentUser.uid), { isOnline: false });
-    }
+    if (currentUser) await updateDoc(doc(db, "users", currentUser.uid), { isOnline: false });
 }
-
 getEl('logout-btn').addEventListener('click', async () => {
     await setOffline();
     location.reload();
 });
 
-// --- 4. FRIEND LIST (FIXED PFP VISIBILITY) ---
+// --- 4. FRIEND LIST ---
 getEl('add-friend-btn').addEventListener('click', async () => {
     const input = prompt("Enter username to add:");
     if (!input) return;
-    
-    // Search for user
-    const q = query(collection(db, "users"), where("username", "==", input.toLowerCase().trim()));
-    const snapshot = await getDocs(q);
+    try {
+        const q = query(collection(db, "users"), where("username", "==", input.toLowerCase().trim()));
+        const snapshot = await getDocs(q);
+        if (snapshot.empty) return alert("User not found");
+        
+        let friendID = null;
+        snapshot.forEach(doc => friendID = doc.data().uid);
+        if (friendID === currentUser.uid) return alert("Cannot add yourself");
 
-    if (snapshot.empty) return alert("User not found");
-    
-    let friendID = null;
-    snapshot.forEach(doc => friendID = doc.data().uid);
-    
-    if (friendID === currentUser.uid) return alert("Cannot add yourself");
-
-    // Add to my friend list
-    await updateDoc(doc(db, "users", currentUser.uid), { friends: arrayUnion(friendID) });
+        await updateDoc(doc(db, "users", currentUser.uid), { friends: arrayUnion(friendID) });
+    } catch(e) { alert("Error adding friend: " + e.message); }
 });
 
 function loadFriendsList() {
@@ -165,34 +135,24 @@ function loadFriendsList() {
         const data = docSnap.data();
         const listEl = getEl('friend-list');
         listEl.innerHTML = "";
-        
-        // Clean up old listeners
         friendListeners.forEach(unsub => unsub());
         friendListeners = [];
 
         if (!data?.friends?.length) {
-            listEl.innerHTML = `<div class="text-center text-gray-500 mt-10 text-xs">No friends yet.</div>`;
+            listEl.innerHTML = `<div class="text-center text-gray-500 mt-10 text-xs">No chats yet.</div>`;
             return;
         }
 
-        // Listen to each friend
         data.friends.forEach(friendUid => {
             const unsub = onSnapshot(doc(db, "users", friendUid), (fSnap) => {
                 if (!fSnap.exists()) return;
                 const fData = fSnap.data();
                 
-                // --- FIX: IMAGE FALLBACK ---
-                // If photoURL is empty/undefined, generate one based on name
-                const displayPhoto = fData.photoURL && fData.photoURL.length > 10 
-                    ? fData.photoURL 
-                    : `https://ui-avatars.com/api/?name=${fData.username}&background=333&color=fff`;
-
+                const displayPhoto = fData.photoURL || `https://ui-avatars.com/api/?name=${fData.username}`;
                 const isOnline = fData.isOnline === true;
                 const statusColor = isOnline ? "bg-green-500 shadow-[0_0_10px_rgba(34,197,94,0.6)]" : "bg-gray-600";
                 
-                // Check if element exists to update or create
                 let card = document.getElementById(`friend-${fData.uid}`);
-                
                 const html = `
                     <div class="relative">
                         <img src="${displayPhoto}" class="w-12 h-12 rounded-full border border-gray-700 object-cover bg-gray-800">
@@ -206,18 +166,16 @@ function loadFriendsList() {
                     </div>
                 `;
 
-                if (card) {
-                    card.innerHTML = html;
-                } else {
+                if (card) { card.innerHTML = html; } 
+                else {
                     card = document.createElement("div");
                     card.id = `friend-${fData.uid}`;
                     card.className = "p-3 rounded-xl hover:bg-gray-900 cursor-pointer flex items-center gap-3 transition border border-transparent hover:border-gray-800";
                     card.innerHTML = html;
-                    card.onclick = () => openChat(fData, displayPhoto); // Pass the verified photo
+                    card.onclick = () => openChat(fData, displayPhoto);
                     listEl.appendChild(card);
                 }
 
-                // Update Header if chatting with this person
                 if (selectedChatUser && selectedChatUser.uid === fData.uid) {
                     getEl('chat-header-status').innerText = isOnline ? "Online" : "Offline";
                     getEl('chat-header-status').className = isOnline ? "text-xs text-green-500 font-bold" : "text-xs text-gray-500";
@@ -231,18 +189,14 @@ function loadFriendsList() {
 // --- 5. CHAT AREA ---
 window.openChat = (friend, verifiedPhoto) => {
     selectedChatUser = friend;
-    // Mobile Transition
     getEl('sidebar').classList.add('hidden');
     getEl('sidebar').classList.remove('flex');
     getEl('chat-area').classList.remove('hidden');
     getEl('chat-area').classList.add('flex');
 
-    // Setup Header
     getEl('chat-header-name').innerText = friend.displayName;
-    // Use the verified photo we calculated in the friend list
-    getEl('chat-header-img').src = verifiedPhoto || friend.photoURL || `https://ui-avatars.com/api/?name=${friend.username}`;
+    getEl('chat-header-img').src = verifiedPhoto || friend.photoURL;
     
-    // Initial Status Check
     const isOnline = friend.isOnline === true;
     getEl('chat-header-status').innerText = isOnline ? "Online" : "Offline";
     getEl('chat-header-status').className = isOnline ? "text-xs text-green-500 font-bold" : "text-xs text-gray-500";
@@ -274,7 +228,6 @@ function loadMessages() {
         snapshot.forEach(doc => {
             const data = doc.data();
             const isMe = data.senderId === currentUser.uid;
-            
             const div = document.createElement("div");
             div.className = `flex ${isMe ? 'justify-end' : 'justify-start'}`;
             
@@ -295,35 +248,48 @@ function loadMessages() {
             `;
             list.appendChild(div);
         });
-        // Auto Scroll to bottom
         setTimeout(() => list.scrollTop = list.scrollHeight, 100);
     });
 }
 
-// --- 6. SENDING ---
+// --- 6. SENDING LOGIC (WITH DEBUGGING) ---
 getEl('send-btn').addEventListener('click', async () => {
     const input = getEl('msg-input');
     const text = input.value.trim();
     if (!text || !selectedChatUser) return;
     
-    await addDoc(collection(db, "chats", getChatID(), "messages"), {
-        content: text, 
-        senderId: currentUser.uid, 
-        createdAt: serverTimestamp(), 
-        type: "text"
-    });
-    input.value = "";
-    getEl('msg-list').scrollTop = getEl('msg-list').scrollHeight;
+    // DEBUG: Try-Catch Block
+    try {
+        await addDoc(collection(db, "chats", getChatID(), "messages"), {
+            content: text, 
+            senderId: currentUser.uid, 
+            createdAt: serverTimestamp(), 
+            type: "text"
+        });
+        input.value = ""; // Clear input ONLY if successful
+        getEl('msg-list').scrollTop = getEl('msg-list').scrollHeight;
+    } catch (e) {
+        console.error(e);
+        alert("SEND FAILED: " + e.message); // <--- THIS WILL TELL YOU THE PROBLEM
+    }
 });
 
-// Audio Logic
+// --- AUDIO LOGIC (WITH DEBUGGING) ---
 const micBtn = getEl('mic-btn');
+
 const startRecording = async () => {
+    // SECURITY CHECK
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        return alert("MICROPHONE ERROR: Your browser is blocking the mic. You must use 'localhost' or HTTPS.");
+    }
+
     try {
         const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
         mediaRecorder = new MediaRecorder(stream);
         audioChunks = [];
+        
         mediaRecorder.ondataavailable = e => audioChunks.push(e.data);
+        
         mediaRecorder.onstop = async () => {
             stream.getTracks().forEach(t => t.stop());
             const blob = new Blob(audioChunks, { type: 'audio/webm' });
@@ -331,20 +297,26 @@ const startRecording = async () => {
             reader.readAsDataURL(blob);
             reader.onloadend = async () => {
                 const base64 = reader.result;
-                // Size Check for Audio
-                if(base64.length > 500000) return alert("Audio too long!");
+                if(base64.length > 800000) return alert("Audio too long!");
                 
-                await addDoc(collection(db, "chats", getChatID(), "messages"), {
-                    content: base64, 
-                    senderId: currentUser.uid, 
-                    createdAt: serverTimestamp(), 
-                    type: "audio"
-                });
+                try {
+                    await addDoc(collection(db, "chats", getChatID(), "messages"), {
+                        content: base64, 
+                        senderId: currentUser.uid, 
+                        createdAt: serverTimestamp(), 
+                        type: "audio"
+                    });
+                } catch(e) {
+                    alert("AUDIO SEND FAILED: " + e.message);
+                }
             };
         };
+        
         mediaRecorder.start();
         micBtn.classList.add('text-red-500', 'animate-pulse');
-    } catch(e) { alert("Mic permission denied"); }
+    } catch(e) { 
+        alert("MIC PERMISSION DENIED: " + e.message); 
+    }
 };
 
 const stopRecording = () => {
@@ -354,7 +326,6 @@ const stopRecording = () => {
     }
 };
 
-// Handle Desktop & Mobile Touch for Mic
 micBtn.addEventListener('mousedown', startRecording);
 micBtn.addEventListener('mouseup', stopRecording);
 micBtn.addEventListener('touchstart', (e) => { e.preventDefault(); startRecording(); });

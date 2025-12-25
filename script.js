@@ -78,7 +78,11 @@ getEl('login-btn').addEventListener('click', async () => {
             currentUser = newUser;
         }
 
-        await updateDoc(doc(db, "users", currentUser.uid), { isOnline: true });
+        // Initial online status set
+        await updateDoc(doc(db, "users", currentUser.uid), { 
+            isOnline: true,
+            lastSeen: serverTimestamp() 
+        });
 
         getEl('login-screen').classList.add('hidden');
         getEl('app-screen').classList.remove('hidden');
@@ -95,25 +99,32 @@ getEl('login-btn').addEventListener('click', async () => {
     }
 });
 
-// --- 3. ONLINE STATUS ---
+// --- 3. ONLINE STATUS (HEARTBEAT SYSTEM) ---
 function setupPresenceSystem() {
-    window.addEventListener('beforeunload', () => setOffline());
-    document.addEventListener('visibilitychange', () => {
+    // "Heartbeat": Update timestamp every 30 seconds
+    setInterval(() => {
         if (currentUser) {
-            const status = document.visibilityState === 'visible';
-            updateDoc(doc(db, "users", currentUser.uid), { isOnline: status });
+            updateDoc(doc(db, "users", currentUser.uid), { 
+                isOnline: true,
+                lastSeen: serverTimestamp()
+            });
         }
-    });
+    }, 30000); // 30 seconds
+
+    // Set offline only when explicitly closing/reloading
+    window.addEventListener('beforeunload', () => setOffline());
 }
+
 async function setOffline() {
     if (currentUser) await updateDoc(doc(db, "users", currentUser.uid), { isOnline: false });
 }
+
 getEl('logout-btn').addEventListener('click', async () => {
     await setOffline();
     location.reload();
 });
 
-// --- 4. FRIEND LIST ---
+// --- 4. FRIEND LIST (UPDATED LOGIC) ---
 getEl('add-friend-btn').addEventListener('click', async () => {
     const input = prompt("Enter username to add:");
     if (!input) return;
@@ -148,8 +159,15 @@ function loadFriendsList() {
                 if (!fSnap.exists()) return;
                 const fData = fSnap.data();
                 
+                // --- HEARTBEAT CHECK LOGIC ---
+                let isOnline = false;
+                if (fData.lastSeen) {
+                    const lastSeenTime = fData.lastSeen.toMillis ? fData.lastSeen.toMillis() : Date.now();
+                    const timeDiff = Date.now() - lastSeenTime;
+                    isOnline = timeDiff < 65000; // Online if seen in last 65 seconds
+                }
+                
                 const displayPhoto = fData.photoURL || `https://ui-avatars.com/api/?name=${fData.username}`;
-                const isOnline = fData.isOnline === true;
                 const statusColor = isOnline ? "bg-green-500 shadow-[0_0_10px_rgba(34,197,94,0.6)]" : "bg-gray-600";
                 
                 let card = document.getElementById(`friend-${fData.uid}`);
@@ -201,10 +219,15 @@ window.openChat = (friend, verifiedPhoto) => {
     getEl('chat-header-name').innerText = friend.displayName;
     getEl('chat-header-img').src = verifiedPhoto || friend.photoURL;
     
-    // Status update (Safety check added)
-    const isOnline = friend.isOnline === true;
+    // Initial status check for header
     const statusEl = getEl('chat-header-status');
     if(statusEl) {
+        // Trigger a fresh calculation based on the friend data we have
+        let isOnline = false;
+        if (friend.lastSeen) {
+             const lastSeenTime = friend.lastSeen.toMillis ? friend.lastSeen.toMillis() : 0;
+             isOnline = (Date.now() - lastSeenTime) < 65000;
+        }
         statusEl.innerText = isOnline ? "Online" : "Offline";
         statusEl.className = isOnline ? "text-xs text-green-500 font-bold" : "text-xs text-gray-500";
     }
@@ -225,11 +248,9 @@ function getChatID() {
     return [currentUser.uid, selectedChatUser.uid].sort().join("_");
 }
 
-// --- FIX: UPDATED LOAD MESSAGES ---
 function loadMessages() {
     if (unsubscribeMessages) unsubscribeMessages();
     
-    // Create query
     const q = query(collection(db, "chats", getChatID(), "messages"), orderBy("createdAt", "asc"));
     
     unsubscribeMessages = onSnapshot(q, (snapshot) => {
@@ -245,7 +266,6 @@ function loadMessages() {
             const data = doc.data();
             const isMe = data.senderId === currentUser.uid;
             
-            // 1. SAFELY HANDLE TIME (Fixes "ghost" messages)
             let timeString = "...";
             if (data.createdAt && data.createdAt.seconds) {
                 timeString = new Date(data.createdAt.seconds * 1000).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
@@ -253,7 +273,6 @@ function loadMessages() {
                 timeString = "Sending...";
             }
 
-            // 2. BUILD CONTENT (Audio vs Text)
             let contentHtml = "";
             if (data.type === "audio") {
                 contentHtml = `
@@ -265,7 +284,6 @@ function loadMessages() {
                 contentHtml = `<p class="break-words">${data.content}</p>`;
             }
 
-            // 3. CREATE MESSAGE BUBBLE
             const div = document.createElement("div");
             div.className = `flex w-full ${isMe ? 'justify-end' : 'justify-start'} mb-4`;
             
@@ -280,7 +298,6 @@ function loadMessages() {
             list.appendChild(div);
         });
 
-        // Scroll to bottom
         setTimeout(() => {
             list.scrollTop = list.scrollHeight;
         }, 100);
@@ -308,7 +325,7 @@ getEl('send-btn').addEventListener('click', async () => {
     }
 });
 
-// --- AUDIO LOGIC (FIXED) ---
+// --- AUDIO LOGIC ---
 const micBtn = getEl('mic-btn');
 
 const startRecording = async () => {
@@ -326,7 +343,7 @@ const startRecording = async () => {
         mediaRecorder.onstop = async () => {
             stream.getTracks().forEach(t => t.stop());
             
-            // FIX: Use correct mime type for blob
+            // Fix: Mime type for blob
             const blob = new Blob(audioChunks, { type: 'audio/webm' });
             
             const reader = new FileReader();
@@ -368,7 +385,7 @@ micBtn.addEventListener('mouseup', stopRecording);
 
 // Touch Events (Mobile)
 micBtn.addEventListener('touchstart', (e) => { 
-    e.preventDefault(); // Prevents mouse emulation
+    e.preventDefault(); 
     startRecording(); 
 });
 micBtn.addEventListener('touchend', (e) => { 

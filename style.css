@@ -1,0 +1,16 @@
+body { 
+    font-family: 'Inter', sans-serif; 
+}
+
+/* Animation for the red microphone when recording */
+.recording-anim { 
+    animation: pulse 1s infinite; 
+    background-color: #ef4444; /* Tailwind red-500 */
+    color: white; 
+}
+
+@keyframes pulse { 
+    0% { transform: scale(1); } 
+    50% { transform: scale(1.1); } 
+    100% { transform: scale(1); } 
+}

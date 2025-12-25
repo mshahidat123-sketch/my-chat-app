@@ -1,1 +1,141 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Chat App</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js";
+        import { getAuth, createUserWithEmailAndPassword, signInWithEmailAndPassword, onAuthStateChanged, signOut } 
+        from "https://www.gstatic.com/firebasejs/10.7.1/firebase-auth.js";
+        import { getFirestore, collection, addDoc, query, orderBy, onSnapshot, serverTimestamp } 
+        from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
+
+        // --- PASTE YOUR FIREBASE CONFIG HERE ---
+        // It looks like: const firebaseConfig = { apiKey: "...", ... };
+        const firebaseConfig = {
+            apiKey: "YOUR_API_KEY_HERE",
+            authDomain: "YOUR_PROJECT.firebaseapp.com",
+            projectId: "YOUR_PROJECT_ID",
+            storageBucket: "YOUR_PROJECT.appspot.com",
+            messagingSenderId: "NUMBERS",
+            appId: "NUMBERS"
+        };
+        // ----------------------------------------
+
+        // Initialize Firebase
+        const app = initializeApp(firebaseConfig);
+        const auth = getAuth(app);
+        const db = getFirestore(app);
+
+        // HTML Elements
+        const loginScreen = document.getElementById('login-screen');
+        const chatScreen = document.getElementById('chat-screen');
+        const emailInput = document.getElementById('email');
+        const passwordInput = document.getElementById('password');
+        const msgInput = document.getElementById('msg-input');
+        const msgList = document.getElementById('msg-list');
+        const userDisplay = document.getElementById('user-display');
+
+        // Check if user is logged in
+        onAuthStateChanged(auth, (user) => {
+            if (user) {
+                loginScreen.classList.add('hidden');
+                chatScreen.classList.remove('hidden');
+                userDisplay.innerText = user.email.split('@')[0]; // Show name part of email
+                loadMessages();
+            } else {
+                loginScreen.classList.remove('hidden');
+                chatScreen.classList.add('hidden');
+            }
+        });
+
+        // Login Function
+        window.login = async () => {
+            try {
+                await signInWithEmailAndPassword(auth, emailInput.value, passwordInput.value);
+            } catch (e) {
+                alert(e.message);
+            }
+        };
+
+        // Signup Function
+        window.signup = async () => {
+            try {
+                await createUserWithEmailAndPassword(auth, emailInput.value, passwordInput.value);
+            } catch (e) {
+                alert("Error: " + e.message);
+            }
+        };
+
+        // Logout Function
+        window.logout = () => signOut(auth);
+
+        // Send Message Function
+        window.sendMsg = async () => {
+            if (msgInput.value.trim() === '') return;
+            await addDoc(collection(db, "messages"), {
+                text: msgInput.value,
+                user: auth.currentUser.email.split('@')[0],
+                createdAt: serverTimestamp()
+            });
+            msgInput.value = "";
+        };
+
+        // Load Messages (Real-time)
+        function loadMessages() {
+            const q = query(collection(db, "messages"), orderBy("createdAt"));
+            onSnapshot(q, (snapshot) => {
+                msgList.innerHTML = ""; // Clear list
+                snapshot.forEach((doc) => {
+                    const data = doc.data();
+                    const isMe = data.user === auth.currentUser.email.split('@')[0];
+                    
+                    const msgDiv = document.createElement("div");
+                    msgDiv.className = `flex ${isMe ? 'justify-end' : 'justify-start'} mb-2`;
+                    
+                    const bubble = document.createElement("div");
+                    bubble.className = `px-4 py-2 rounded-lg max-w-[70%] ${isMe ? 'bg-blue-500 text-white' : 'bg-gray-200 text-black'}`;
+                    bubble.innerHTML = `<div class="text-xs opacity-75 mb-1">${data.user}</div>${data.text}`;
+                    
+                    msgDiv.appendChild(bubble);
+                    msgList.appendChild(msgDiv);
+                });
+                // Auto scroll to bottom
+                msgList.scrollTop = msgList.scrollHeight;
+            });
+        }
+    </script>
+</head>
+<body class="bg-gray-100 h-screen flex justify-center items-center font-sans">
+
+    <div id="login-screen" class="bg-white p-8 rounded-xl shadow-lg w-80 text-center">
+        <h1 class="text-2xl font-bold mb-6 text-pink-600">InstaChat</h1>
+        <input id="email" type="email" placeholder="Email" class="w-full p-2 mb-3 border rounded">
+        <input id="password" type="password" placeholder="Password" class="w-full p-2 mb-4 border rounded">
+        <button onclick="login()" class="w-full bg-blue-500 text-white p-2 rounded mb-2 hover:bg-blue-600">Login</button>
+        <button onclick="signup()" class="w-full bg-green-500 text-white p-2 rounded hover:bg-green-600">Sign Up</button>
+    </div>
+
+    <div id="chat-screen" class="hidden bg-white w-full h-full md:w-[400px] md:h-[80vh] md:rounded-xl md:shadow-2xl flex flex-col relative">
+        <div class="bg-white border-b p-4 flex justify-between items-center sticky top-0 z-10">
+            <h2 class="font-bold text-lg">Chat</h2>
+            <div class="flex items-center gap-2">
+                <span id="user-display" class="text-sm text-gray-500"></span>
+                <button onclick="logout()" class="text-red-500 text-sm font-bold">Log out</button>
+            </div>
+        </div>
+
+        <div id="msg-list" class="flex-1 p-4 overflow-y-auto bg-white">
+            </div>
+
+        <div class="p-3 border-t bg-gray-50 flex gap-2">
+            <input id="msg-input" type="text" placeholder="Message..." class="flex-1 p-2 border rounded-full focus:outline-none focus:border-blue-400">
+            <button onclick="sendMsg()" class="bg-blue-500 text-white px-4 py-2 rounded-full font-bold">Send</button>
+        </div>
+    </div>
+
+</body>
+</html>
 

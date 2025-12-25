@@ -3,7 +3,6 @@ import { getFirestore, collection, addDoc, setDoc, getDocs, doc, query, where, o
 from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
 
 // --- PASTE YOUR FIREBASE CONFIG HERE ---
-// ⚠️ IF YOU DON'T PASTE YOUR KEYS HERE, LOGIN WILL NOT WORK!
 const firebaseConfig = {
     apiKey: "AIzaSyAo_QQ_3i_GmQsyi3tTUWwmJK09z_Y3sNM",
   authDomain: "chatapp-e007a.firebaseapp.com",
@@ -15,21 +14,43 @@ const firebaseConfig = {
 };
 // ----------------------------------------
 
-const app = initializeApp(firebaseConfig);
-const db = getFirestore(app);
+// --- DEBUG LOGGER (VISIBLE ON SCREEN) ---
+function logError(message) {
+    console.error(message);
+    const errorBox = document.getElementById('debug-box');
+    if (!errorBox) {
+        const div = document.createElement('div');
+        div.id = 'debug-box';
+        div.style = "position:fixed; bottom:0; left:0; width:100%; bg-red-100; color:red; font-weight:bold; p-4; z-index:9999; border-top: 2px solid red; background: #fee2e2; padding: 10px; font-size: 12px;";
+        document.body.appendChild(div);
+        div.innerText = "DEBUG LOG:\n" + message;
+    } else {
+        errorBox.innerText += "\n" + message;
+    }
+}
+
+// 1. Check Keys immediately
+if (firebaseConfig.apiKey === "YOUR_API_KEY") {
+    logError("CRITICAL ERROR: You forgot to paste your Firebase Keys in script.js!");
+}
+
+let app, db;
+try {
+    app = initializeApp(firebaseConfig);
+    db = getFirestore(app);
+} catch (e) {
+    logError("Firebase Init Error: " + e.message);
+}
 
 let currentUser = null;
 let selectedChatUser = null;
 let unsubscribeMessages = null;
-let mediaRecorder = null;
-let audioChunks = [];
 let uploadedAvatar = null;
 
 // --- IMAGE HANDLING ---
 window.previewAvatar = (event) => {
     const file = event.target.files[0];
     if (!file) return;
-
     const reader = new FileReader();
     reader.onload = (e) => {
         const img = new Image();
@@ -37,7 +58,6 @@ window.previewAvatar = (event) => {
         img.onload = () => {
             const canvas = document.createElement('canvas');
             const ctx = canvas.getContext('2d');
-            // Resize to 200x200 for speed
             const maxSize = 200;
             let width = img.width;
             let height = img.height;
@@ -56,36 +76,31 @@ window.previewAvatar = (event) => {
     reader.readAsDataURL(file);
 };
 
-// --- LOGIN LOGIC (FIXED) ---
+// --- LOGIN LOGIC (WITH DEBUGGING) ---
 window.usernameLogin = async () => {
     const usernameInput = document.getElementById('login-username').value.trim();
     if (!usernameInput) return alert("Please enter a username");
     
     const btn = document.getElementById('login-btn');
-    const originalText = btn.innerText;
-    btn.innerText = "Loading...";
-    btn.disabled = true;
+    btn.innerText = "Connecting...";
 
     try {
+        logError("Step 1: Searching for user...");
         const q = query(collection(db, "users"), where("username", "==", usernameInput.toLowerCase()));
         const snapshot = await getDocs(q);
 
-        // Default photo if they didn't upload one
         let finalPhoto = uploadedAvatar || `https://ui-avatars.com/api/?name=${usernameInput}&background=random`;
 
         if (!snapshot.empty) {
-            // --- EXISTING USER LOGIC (FIXED) ---
-            // We take the first matching user directly
+            logError("Step 2: User found. Logging in...");
             const userDoc = snapshot.docs[0];
             currentUser = userDoc.data();
-
-            // If they uploaded a NEW photo this time, update it
             if (uploadedAvatar) {
                 await updateDoc(doc(db, "users", currentUser.uid), { photoURL: uploadedAvatar });
                 currentUser.photoURL = uploadedAvatar;
             }
         } else {
-            // --- NEW USER LOGIC ---
+            logError("Step 2: Creating new user...");
             const newUid = "user_" + Date.now(); 
             const newUser = {
                 uid: newUid,
@@ -98,17 +113,18 @@ window.usernameLogin = async () => {
             currentUser = newUser;
         }
 
-        // Switch Screens
+        logError("Step 3: Success! Switching screens.");
         document.getElementById('my-mini-avatar').src = currentUser.photoURL;
         document.getElementById('login-screen').classList.add('hidden');
         document.getElementById('app-screen').classList.remove('hidden');
         loadFriendsList();
 
     } catch (error) {
-        console.error("Login Error:", error);
-        alert("Login failed! Did you paste your Firebase Keys? \n\nError details: " + error.message);
-        btn.innerText = originalText;
-        btn.disabled = false;
+        logError("LOGIN FAILED: " + error.message);
+        if (error.message.includes("permission")) {
+            logError("HINT: Your Firestore Database Rules might be blocking this. Set them to Test Mode.");
+        }
+        btn.innerText = "Try Again";
     }
 };
 
@@ -121,21 +137,15 @@ window.addFriend = async () => {
     try {
         const q = query(collection(db, "users"), where("username", "==", input.toLowerCase()));
         const snapshot = await getDocs(q);
-
         if (snapshot.empty) {
             alert("User not found!");
         } else {
             const friendData = snapshot.docs[0].data();
             if (friendData.uid === currentUser.uid) return alert("You cannot add yourself.");
-            
-            await updateDoc(doc(db, "users", currentUser.uid), { 
-                friends: arrayUnion(friendData.uid) 
-            });
+            await updateDoc(doc(db, "users", currentUser.uid), { friends: arrayUnion(friendData.uid) });
             alert("Friend added!");
         }
-    } catch (e) {
-        alert("Error adding friend: " + e.message);
-    }
+    } catch (e) { alert(e.message); }
 };
 
 function loadFriendsList() {
@@ -144,12 +154,10 @@ function loadFriendsList() {
         const myData = docSnap.data();
         const friendListEl = document.getElementById('friend-list');
         friendListEl.innerHTML = "";
-        
         if (!myData.friends || myData.friends.length === 0) {
             friendListEl.innerHTML = `<div class="p-4 text-center text-gray-500 text-sm">No friends yet.<br>Click "+" to search!</div>`;
             return;
         }
-
         for (const friendUid of myData.friends) {
             const friendSnap = await getDoc(doc(db, "users", friendUid));
             if (friendSnap.exists()) {
@@ -164,7 +172,7 @@ function loadFriendsList() {
     });
 }
 
-// --- CHAT UI ---
+// --- CHAT & VOICE (Keeping Standard) ---
 window.openChat = (friend) => {
     selectedChatUser = friend;
     document.getElementById('sidebar').classList.add('hidden');
@@ -185,7 +193,6 @@ window.backToList = () => {
     document.getElementById('chat-area').classList.remove('flex');
 };
 
-// --- MESSAGING ---
 function getChatID() {
     const ids = [currentUser.uid, selectedChatUser.uid].sort();
     return ids[0] + "_" + ids[1];
@@ -196,7 +203,6 @@ function loadMessages() {
     const chatID = getChatID();
     const q = query(collection(db, "chats", chatID, "messages"), orderBy("createdAt"));
     const msgList = document.getElementById('msg-list');
-
     unsubscribeMessages = onSnapshot(q, (snapshot) => {
         msgList.innerHTML = "";
         snapshot.forEach(doc => {
@@ -204,14 +210,7 @@ function loadMessages() {
             const isMe = data.senderId === currentUser.uid;
             const msgDiv = document.createElement("div");
             msgDiv.className = `flex ${isMe ? 'justify-end' : 'justify-start'} mb-2`;
-            
-            let content = "";
-            if (data.type === "audio") {
-                content = `<audio controls src="${data.audioData}" class="h-8 w-48"></audio>`;
-            } else {
-                content = data.text;
-            }
-
+            let content = data.type === "audio" ? `<audio controls src="${data.audioData}" class="h-8 w-48"></audio>` : data.text;
             msgDiv.innerHTML = `<div class="px-3 py-2 rounded-2xl max-w-[85%] text-sm ${isMe ? 'bg-blue-600 text-white' : 'bg-gray-200 text-black'} shadow-sm">${content}</div>`;
             msgList.appendChild(msgDiv);
         });
@@ -224,22 +223,17 @@ window.sendMessage = async () => {
     const text = input.value.trim();
     if (!text || !selectedChatUser) return;
     const chatID = getChatID();
-    await addDoc(collection(db, "chats", chatID, "messages"), {
-        text: text, senderId: currentUser.uid, createdAt: serverTimestamp(), type: "text"
-    });
+    await addDoc(collection(db, "chats", chatID, "messages"), { text: text, senderId: currentUser.uid, createdAt: serverTimestamp(), type: "text" });
     input.value = "";
 };
 
-// --- VOICE RECORDING ---
 const micBtn = document.getElementById('mic-btn');
-
 window.startRecording = async () => {
     try {
         const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-        mediaRecorder = new MediaRecorder(stream);
-        audioChunks = [];
+        let mediaRecorder = new MediaRecorder(stream);
+        let audioChunks = [];
         mediaRecorder.ondataavailable = e => audioChunks.push(e.data);
-
         mediaRecorder.onstop = async () => {
             stream.getTracks().forEach(track => track.stop());
             if(audioChunks.length === 0) return;
@@ -250,27 +244,17 @@ window.startRecording = async () => {
                 const base64Audio = reader.result;
                 if(base64Audio.length > 900000) { alert("Voice note too long!"); return; }
                 const chatID = getChatID();
-                await addDoc(collection(db, "chats", chatID, "messages"), {
-                    audioData: base64Audio, senderId: currentUser.uid, createdAt: serverTimestamp(), type: "audio"
-                });
+                await addDoc(collection(db, "chats", chatID, "messages"), { audioData: base64Audio, senderId: currentUser.uid, createdAt: serverTimestamp(), type: "audio" });
             };
         };
         mediaRecorder.start();
         micBtn.classList.add('recording-anim');
+        // Stop recording when mouse/touch is lifted
+        const stopHandler = () => { if(mediaRecorder.state === "recording") { mediaRecorder.stop(); micBtn.classList.remove('recording-anim'); } };
+        micBtn.onmouseup = stopHandler;
+        micBtn.ontouchend = stopHandler;
     } catch (err) { alert("Microphone permission denied."); }
 };
-
-window.stopRecording = () => {
-    if(mediaRecorder && mediaRecorder.state === "recording") {
-        mediaRecorder.stop();
-        micBtn.classList.remove('recording-anim');
-    }
-};
-
-document.addEventListener('DOMContentLoaded', () => {
-    micBtn.addEventListener('mousedown', window.startRecording);
-    micBtn.addEventListener('mouseup', window.stopRecording);
-    micBtn.addEventListener('touchstart', (e) => { e.preventDefault(); window.startRecording(); }, {passive: false});
-    micBtn.addEventListener('touchend', (e) => { e.preventDefault(); window.stopRecording(); }, {passive: false});
-});
+micBtn.onmousedown = window.startRecording;
+micBtn.ontouchstart = (e) => { e.preventDefault(); window.startRecording(); };
 

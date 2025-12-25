@@ -3,6 +3,7 @@ import { getFirestore, collection, addDoc, setDoc, getDocs, doc, query, where, o
 from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
 
 // --- PASTE YOUR FIREBASE CONFIG HERE ---
+// ⚠️ IF YOU DON'T PASTE YOUR KEYS HERE, LOGIN WILL NOT WORK!
 const firebaseConfig = {
     apiKey: "AIzaSyAo_QQ_3i_GmQsyi3tTUWwmJK09z_Y3sNM",
   authDomain: "chatapp-e007a.firebaseapp.com",
@@ -24,21 +25,19 @@ let mediaRecorder = null;
 let audioChunks = [];
 let uploadedAvatar = null;
 
-// --- IMAGE HANDLING (Compress Image) ---
+// --- IMAGE HANDLING ---
 window.previewAvatar = (event) => {
     const file = event.target.files[0];
     if (!file) return;
 
     const reader = new FileReader();
     reader.onload = (e) => {
-        // Create an image to resize it
         const img = new Image();
         img.src = e.target.result;
         img.onload = () => {
             const canvas = document.createElement('canvas');
             const ctx = canvas.getContext('2d');
-            
-            // Resize to max 200x200px for speed
+            // Resize to 200x200 for speed
             const maxSize = 200;
             let width = img.width;
             let height = img.height;
@@ -50,8 +49,6 @@ window.previewAvatar = (event) => {
             canvas.width = width;
             canvas.height = height;
             ctx.drawImage(img, 0, 0, width, height);
-            
-            // Get compressed Base64
             uploadedAvatar = canvas.toDataURL('image/jpeg', 0.7);
             document.getElementById('avatar-preview').src = uploadedAvatar;
         };
@@ -59,30 +56,36 @@ window.previewAvatar = (event) => {
     reader.readAsDataURL(file);
 };
 
-// --- LOGIN LOGIC ---
+// --- LOGIN LOGIC (FIXED) ---
 window.usernameLogin = async () => {
     const usernameInput = document.getElementById('login-username').value.trim();
     if (!usernameInput) return alert("Please enter a username");
+    
     const btn = document.getElementById('login-btn');
-    btn.innerText = "Setting up...";
+    const originalText = btn.innerText;
+    btn.innerText = "Loading...";
+    btn.disabled = true;
 
     try {
         const q = query(collection(db, "users"), where("username", "==", usernameInput.toLowerCase()));
         const snapshot = await getDocs(q);
 
+        // Default photo if they didn't upload one
         let finalPhoto = uploadedAvatar || `https://ui-avatars.com/api/?name=${usernameInput}&background=random`;
 
         if (!snapshot.empty) {
-            // User exists: Update their photo if they uploaded a new one
-            snapshot.forEach(async (d) => {
-                currentUser = d.data();
-                if (uploadedAvatar) {
-                    await updateDoc(doc(db, "users", currentUser.uid), { photoURL: uploadedAvatar });
-                    currentUser.photoURL = uploadedAvatar;
-                }
-            });
+            // --- EXISTING USER LOGIC (FIXED) ---
+            // We take the first matching user directly
+            const userDoc = snapshot.docs[0];
+            currentUser = userDoc.data();
+
+            // If they uploaded a NEW photo this time, update it
+            if (uploadedAvatar) {
+                await updateDoc(doc(db, "users", currentUser.uid), { photoURL: uploadedAvatar });
+                currentUser.photoURL = uploadedAvatar;
+            }
         } else {
-            // New User
+            // --- NEW USER LOGIC ---
             const newUid = "user_" + Date.now(); 
             const newUser = {
                 uid: newUid,
@@ -95,16 +98,17 @@ window.usernameLogin = async () => {
             currentUser = newUser;
         }
 
-        // UI Updates
+        // Switch Screens
         document.getElementById('my-mini-avatar').src = currentUser.photoURL;
         document.getElementById('login-screen').classList.add('hidden');
         document.getElementById('app-screen').classList.remove('hidden');
         loadFriendsList();
 
     } catch (error) {
-        console.error(error);
-        alert("Error: " + error.message);
-        btn.innerText = "Start Chatting";
+        console.error("Login Error:", error);
+        alert("Login failed! Did you paste your Firebase Keys? \n\nError details: " + error.message);
+        btn.innerText = originalText;
+        btn.disabled = false;
     }
 };
 
@@ -114,29 +118,38 @@ window.logout = () => location.reload();
 window.addFriend = async () => {
     const input = prompt("Enter the exact Username to add:");
     if (!input) return;
-    const q = query(collection(db, "users"), where("username", "==", input.toLowerCase()));
-    const snapshot = await getDocs(q);
+    try {
+        const q = query(collection(db, "users"), where("username", "==", input.toLowerCase()));
+        const snapshot = await getDocs(q);
 
-    if (snapshot.empty) {
-        alert("User not found!");
-    } else {
-        let friendData = null;
-        snapshot.forEach(doc => friendData = doc.data());
-        if (friendData.uid === currentUser.uid) return alert("You cannot add yourself.");
-        await updateDoc(doc(db, "users", currentUser.uid), { friends: arrayUnion(friendData.uid) });
-        alert("Friend added!");
+        if (snapshot.empty) {
+            alert("User not found!");
+        } else {
+            const friendData = snapshot.docs[0].data();
+            if (friendData.uid === currentUser.uid) return alert("You cannot add yourself.");
+            
+            await updateDoc(doc(db, "users", currentUser.uid), { 
+                friends: arrayUnion(friendData.uid) 
+            });
+            alert("Friend added!");
+        }
+    } catch (e) {
+        alert("Error adding friend: " + e.message);
     }
 };
 
 function loadFriendsList() {
     onSnapshot(doc(db, "users", currentUser.uid), async (docSnap) => {
+        if (!docSnap.exists()) return;
         const myData = docSnap.data();
         const friendListEl = document.getElementById('friend-list');
         friendListEl.innerHTML = "";
-        if (!myData || !myData.friends || myData.friends.length === 0) {
+        
+        if (!myData.friends || myData.friends.length === 0) {
             friendListEl.innerHTML = `<div class="p-4 text-center text-gray-500 text-sm">No friends yet.<br>Click "+" to search!</div>`;
             return;
         }
+
         for (const friendUid of myData.friends) {
             const friendSnap = await getDoc(doc(db, "users", friendUid));
             if (friendSnap.exists()) {

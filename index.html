@@ -1,53 +1,23 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Chat App</title>
-    <script src="https://cdn.tailwindcss.com"></script>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="style.css">
-</head>
-<body class="bg-gray-100 h-[100dvh] w-full overflow-hidden">
-
     <div id="login-screen" class="h-full flex flex-col justify-center items-center p-4">
         <div class="bg-white p-8 rounded-2xl shadow-xl w-full max-w-sm text-center">
-            <h1 class="text-3xl font-bold mb-6 text-blue-600">InstaChat</h1>
+            <h1 class="text-3xl font-bold mb-2 text-blue-600">InstaChat</h1>
+            <p class="text-gray-500 mb-6">Create your profile</p>
             
-            <div class="relative mx-auto w-24 h-24 mb-6 cursor-pointer group" onclick="document.getElementById('avatar-input').click()">
-                <img id="avatar-preview" src="https://ui-avatars.com/api/?name=User&background=cbd5e1&color=fff" class="w-full h-full rounded-full object-cover border-4 border-gray-100 shadow-sm transition group-hover:opacity-75">
-                
-                <div class="absolute bottom-0 right-0 bg-blue-600 text-white p-2 rounded-full border-2 border-white shadow-sm">
-                    <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z" /><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 13a3 3 0 11-6 0 3 3 0 016 0z" /></svg>
-                </div>
-                <input type="file" id="avatar-input" hidden accept="image/*" onchange="previewAvatar(event)">
+            <div class="mb-6 flex justify-center">
+                <label for="avatar-input" class="cursor-pointer group relative">
+                    <div id="avatar-preview" class="w-24 h-24 rounded-full bg-gray-100 border-2 border-dashed border-gray-300 flex items-center justify-center overflow-hidden group-hover:border-blue-500 transition">
+                        <span id="avatar-text" class="text-xs text-gray-400">Tap to<br>Upload</span>
+                        <img id="avatar-img" class="hidden w-full h-full object-cover">
+                    </div>
+                    <div class="absolute bottom-0 right-0 bg-blue-600 text-white rounded-full p-1 shadow-md">
+                        <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M4 5a2 2 0 00-2 2v8a2 2 0 002 2h12a2 2 0 002-2V7a2 2 0 00-2-2h-1.586a1 1 0 01-.707-.293l-1.121-1.121A2 2 0 0011.172 3H8.828a2 2 0 00-1.414.586L6.293 4.707A1 1 0 015.586 5H4zm6 9a3 3 0 100-6 3 3 0 000 6z" clip-rule="evenodd" /></svg>
+                    </div>
+                </label>
+                <input type="file" id="avatar-input" accept="image/*" class="hidden" onchange="previewAvatar()">
             </div>
-
-            <p class="text-gray-400 text-xs mb-4">Tap photo to change</p>
-
-            <input id="login-username" type="text" placeholder="Enter your Name" class="w-full p-3 border rounded-lg mb-4 text-center focus:outline-none focus:border-blue-500 bg-gray-50">
-            <button id="login-btn" onclick="usernameLogin()" class="w-full bg-blue-600 text-white p-3 rounded-lg font-bold hover:bg-blue-700 transition shadow-lg">Start Chatting</button>
+            
+            <input id="login-username" type="text" placeholder="Username (e.g. rahul)" class="w-full p-3 border rounded-lg mb-4 text-center focus:outline-none focus:border-blue-500">
+            <button id="login-btn" onclick="usernameLogin()" class="w-full bg-blue-600 text-white p-3 rounded-lg font-bold hover:bg-blue-700 transition">Enter</button>
         </div>
     </div>
-
-    <div id="app-screen" class="hidden h-full w-full flex relative">
-        <div id="sidebar" class="w-full md:w-1/3 bg-white border-r flex flex-col h-full z-10">
-            <div class="p-4 bg-gray-50 border-b flex justify-between items-center shadow-sm shrink-0">
-                <div class="flex items-center gap-2">
-                    <img id="my-mini-avatar" src="" class="w-8 h-8 rounded-full border">
-                    <h2 class="font-bold text-xl text-gray-800">Chats</h2>
-                </div>
-                <div class="flex gap-2">
-                    <button onclick="addFriend()" class="bg-blue-100 text-blue-600 p-2 rounded-full hover:bg-blue-200">
-                        <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M10 3a1 1 0 011 1v5h5a1 1 0 110 2h-5v5a1 1 0 11-2 0v-5H4a1 1 0 110-2h5V4a1 1 0 011-1z" clip-rule="evenodd" /></svg>
-                    </button>
-                    <button onclick="logout()" class="text-red-500 text-sm font-semibold">Exit</button>
-                </div>
-            </div>
-            <div id="friend-list" class="flex-1 overflow-y-auto"></div>
-        </div>
-
-        <div id="chat-area" class="hidden md:flex w-full md:w-2/3 flex-col bg-white h-full z-20">
-            <div class="p-3 border-b flex items-center gap-3 bg-white shadow-sm shrink-0">
-                <button onclick="backToList()" class="md:hidden p-2 text-gray-60
 

@@ -25,14 +25,50 @@ let selectedAvatarBase64 = null;
 
 const getEl = (id) => document.getElementById(id);
 
-// --- 1. GLOBAL REQUEST HANDLER ---
+// --- 1. GLOBAL HELPERS (Audio & Requests) ---
+window.toggleAudio = (id) => {
+    const audio = document.getElementById(`audio-${id}`);
+    const container = document.getElementById(`container-${id}`);
+    const playIcon = document.getElementById(`icon-play-${id}`);
+    const pauseIcon = document.getElementById(`icon-pause-${id}`);
+
+    // Pause others
+    document.querySelectorAll('audio').forEach(a => {
+        if(a.id !== `audio-${id}`) {
+            a.pause();
+            a.currentTime = 0;
+            const otherId = a.id.replace('audio-', '');
+            window.resetAudio(otherId);
+        }
+    });
+
+    if (audio.paused) {
+        audio.play();
+        container.classList.add('playing');
+        playIcon.classList.add('hidden');
+        pauseIcon.classList.remove('hidden');
+    } else {
+        audio.pause();
+        container.classList.remove('playing');
+        playIcon.classList.remove('hidden');
+        pauseIcon.classList.add('hidden');
+    }
+};
+
+window.resetAudio = (id) => {
+    const container = document.getElementById(`container-${id}`);
+    const playIcon = document.getElementById(`icon-play-${id}`);
+    const pauseIcon = document.getElementById(`icon-pause-${id}`);
+    if(container) container.classList.remove('playing');
+    if(playIcon) playIcon.classList.remove('hidden');
+    if(pauseIcon) pauseIcon.classList.add('hidden');
+};
+
 window.respondRequest = async function(targetUid, isAccepted) {
     if (!currentUser) return;
     try {
         const myRef = doc(db, "users", currentUser.uid);
         const theirRef = doc(db, "users", targetUid);
-
-        // Remove request
         await updateDoc(myRef, { friendRequests: arrayRemove(targetUid) });
 
         if (isAccepted) {
@@ -41,33 +77,25 @@ window.respondRequest = async function(targetUid, isAccepted) {
             alert("Friend added!");
         }
         
-        // Refresh modal if empty
-        const modal = getEl('requests-modal');
+        // Hide modal if empty
         if (!currentUser.friendRequests || currentUser.friendRequests.length <= 1) {
-            modal.classList.add('hidden');
+            getEl('requests-modal').classList.add('hidden');
         }
-
-    } catch(e) { console.error(e); alert("Error: " + e.message); }
+    } catch(e) { console.error(e); }
 };
 
-// --- 2. MODAL LOGIC ---
+// --- 2. UI LOGIC ---
 const requestsBtn = getEl('requests-btn');
 const requestsModal = getEl('requests-modal');
 const closeRequestsBtn = getEl('close-requests-btn');
 
 requestsBtn.addEventListener('click', () => {
     requestsModal.classList.remove('hidden');
-    // Re-render requests when opening to ensure freshness
-    if (currentUser && currentUser.friendRequests) {
-        renderRequestsModal(currentUser.friendRequests);
-    }
+    if (currentUser && currentUser.friendRequests) renderRequestsModal(currentUser.friendRequests);
 });
+closeRequestsBtn.addEventListener('click', () => requestsModal.classList.add('hidden'));
 
-closeRequestsBtn.addEventListener('click', () => {
-    requestsModal.classList.add('hidden');
-});
-
-// --- 3. AVATAR UPLOAD ---
+// Avatar
 getEl('avatar-input').addEventListener('change', (e) => {
     const file = e.target.files[0];
     if (file) {
@@ -82,7 +110,7 @@ getEl('avatar-input').addEventListener('change', (e) => {
     }
 });
 
-// --- 4. LOGIN ---
+// --- 3. LOGIN & AUTH ---
 getEl('login-btn').addEventListener('click', async () => {
     const username = getEl('login-username').value.trim().toLowerCase();
     if (!username) return alert("Enter a username");
@@ -118,10 +146,7 @@ getEl('login-btn').addEventListener('click', async () => {
             currentUser = newUser;
         }
 
-        await updateDoc(doc(db, "users", currentUser.uid), { 
-            isOnline: true,
-            lastSeen: serverTimestamp() 
-        });
+        await updateDoc(doc(db, "users", currentUser.uid), { isOnline: true, lastSeen: serverTimestamp() });
 
         getEl('login-screen').classList.add('hidden');
         getEl('app-screen').classList.remove('hidden');
@@ -129,102 +154,73 @@ getEl('login-btn').addEventListener('click', async () => {
         
         loadData(); 
         setupPresenceSystem();
-
     } catch (err) {
         console.error(err);
-        alert("LOGIN ERROR: " + err.message);
+        alert("Login Error: " + err.message);
         getEl('login-btn').innerText = "Enter Shotta";
         getEl('login-btn').disabled = false;
     }
 });
 
-// --- 5. DATA LOADING ---
+// --- 4. DATA LOADING ---
 function loadData() {
     onSnapshot(doc(db, "users", currentUser.uid), (docSnap) => {
         const data = docSnap.data();
         if(!data) return;
         currentUser = data; 
 
-        // HANDLE REQUESTS ICON & BADGE
+        // Requests Icon
         const reqBtn = getEl('requests-btn');
         const reqBadge = getEl('requests-badge');
-        
         if (data.friendRequests && data.friendRequests.length > 0) {
-            reqBtn.classList.remove('hidden'); // Show Bell
-            reqBadge.classList.remove('hidden'); // Show Red Dot
-            
-            // If modal is open, refresh the list live
-            if (!getEl('requests-modal').classList.contains('hidden')) {
-                renderRequestsModal(data.friendRequests);
-            }
+            reqBtn.classList.remove('hidden');
+            reqBadge.classList.remove('hidden');
+            if (!getEl('requests-modal').classList.contains('hidden')) renderRequestsModal(data.friendRequests);
         } else {
-            reqBtn.classList.add('hidden'); // Hide Bell if no requests
-            getEl('requests-modal').classList.add('hidden'); // Close modal if empty
+            reqBtn.classList.add('hidden');
+            getEl('requests-modal').classList.add('hidden');
         }
 
-        // RENDER FRIENDS
         renderFriendsList(data.friends || [], data.unread || {});
     });
 }
 
-// --- 6. RENDER REQUESTS MODAL ---
 async function renderRequestsModal(requestUids) {
     const container = getEl('requests-list-container');
-    container.innerHTML = ""; // Clear existing
-    
+    container.innerHTML = "";
     if (!requestUids || requestUids.length === 0) {
         container.innerHTML = `<p class="text-center text-gray-500 py-4">No pending requests.</p>`;
         return;
     }
-
     for (const uid of requestUids) {
         try {
-            // Cleanup: If already friend, remove request
             if (currentUser.friends.includes(uid)) {
                 updateDoc(doc(db, "users", currentUser.uid), { friendRequests: arrayRemove(uid) });
                 continue;
             }
-
             const userDoc = await getDoc(doc(db, "users", uid));
-            
-            // Cleanup: If user deleted, remove request
-            if (!userDoc.exists()) {
-                updateDoc(doc(db, "users", currentUser.uid), { friendRequests: arrayRemove(uid) });
-                continue;
-            }
-
+            if (!userDoc.exists()) continue;
             const uData = userDoc.data();
 
             const div = document.createElement('div');
-            div.className = "flex items-center justify-between p-3 mb-2 bg-gray-800 rounded-xl border border-gray-700";
-            
+            div.className = "flex items-center justify-between p-3 bg-gray-800 rounded-xl border border-gray-700";
             div.innerHTML = `
                 <div class="flex items-center gap-3">
-                    <img src="${uData.photoURL}" class="w-12 h-12 rounded-full border-2 border-gray-600 object-cover">
-                    <div class="flex flex-col">
-                        <span class="text-sm font-bold text-white">${uData.displayName}</span>
-                        <span class="text-[10px] text-gray-400">Wants to chat</span>
-                    </div>
+                    <img src="${uData.photoURL}" class="w-10 h-10 rounded-full border border-gray-600 object-cover">
+                    <div class="flex flex-col"><span class="text-sm font-bold text-white">${uData.displayName}</span><span class="text-[10px] text-gray-400">Requesting...</span></div>
                 </div>
                 <div class="flex gap-2">
-                    <button onclick="window.respondRequest('${uData.uid}', true)" class="bg-green-600 hover:bg-green-500 text-white p-2 rounded-lg transition shadow-lg" title="Accept">
-                        <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd" /></svg>
-                    </button>
-                    <button onclick="window.respondRequest('${uData.uid}', false)" class="bg-red-600 hover:bg-red-500 text-white p-2 rounded-lg transition shadow-lg" title="Decline">
-                        <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clip-rule="evenodd" /></svg>
-                    </button>
-                </div>
-            `;
+                    <button onclick="window.respondRequest('${uData.uid}', true)" class="bg-green-600 hover:bg-green-500 text-white p-2 rounded-lg"><ion-icon name="checkmark"></ion-icon></button>
+                    <button onclick="window.respondRequest('${uData.uid}', false)" class="bg-red-600 hover:bg-red-500 text-white p-2 rounded-lg"><ion-icon name="close"></ion-icon></button>
+                </div>`;
             container.appendChild(div);
-        } catch(e) { console.error(e); }
+        } catch(e) {}
     }
 }
 
-// --- 7. RENDER FRIENDS ---
 function renderFriendsList(friendsList, unreadMap) {
     const listEl = getEl('friend-list');
     listEl.innerHTML = "";
-    
     friendListeners.forEach(unsub => unsub());
     friendListeners = [];
 
@@ -240,22 +236,19 @@ function renderFriendsList(friendsList, unreadMap) {
             
             let isOnline = false;
             if (fData.lastSeen) {
-                const lastSeenTime = fData.lastSeen.toMillis ? fData.lastSeen.toMillis() : 0;
-                isOnline = (Date.now() - lastSeenTime) < 65000;
+                const diff = Date.now() - (fData.lastSeen.toMillis ? fData.lastSeen.toMillis() : 0);
+                isOnline = diff < 65000;
             }
             
             const unreadCount = unreadMap[fData.uid] || 0;
-            const unreadBadge = unreadCount > 0 
-                ? `<div class="bg-red-500 text-white text-[10px] font-bold h-5 min-w-[1.25rem] px-1 flex items-center justify-center rounded-full shadow-lg shadow-red-900 animate-pulse">${unreadCount}</div>` 
-                : '';
-            
+            const unreadBadge = unreadCount > 0 ? `<div class="bg-red-500 text-white text-[10px] font-bold h-5 min-w-[1.25rem] px-1 flex items-center justify-center rounded-full shadow-lg shadow-red-900">${unreadCount}</div>` : '';
             const isActive = selectedChatUser && selectedChatUser.uid === fData.uid;
-            const bgClass = isActive ? "bg-green-900/20 border-green-500/30" : "hover:bg-gray-900 border-transparent hover:border-gray-800";
+            const bgClass = isActive ? "bg-gray-800 border-gray-700" : "hover:bg-gray-900 border-transparent hover:border-gray-800";
 
             let card = document.getElementById(`friend-${fData.uid}`);
             const html = `
                 <div class="relative">
-                    <img src="${fData.photoURL || 'https://ui-avatars.com/api/?name=?'}" class="w-12 h-12 rounded-full border border-gray-700 object-cover bg-gray-800">
+                    <img src="${fData.photoURL}" class="w-12 h-12 rounded-full border border-gray-700 object-cover bg-gray-800">
                     <div class="absolute bottom-0 right-0 w-3.5 h-3.5 ${isOnline ? "bg-green-500" : "bg-gray-600"} rounded-full border-2 border-black"></div>
                 </div>
                 <div class="flex-1 min-w-0">
@@ -263,16 +256,11 @@ function renderFriendsList(friendsList, unreadMap) {
                         <p class="font-bold text-gray-200 capitalize text-sm truncate">${fData.displayName}</p>
                         ${unreadBadge}
                     </div>
-                    <p class="text-[10px] ${isOnline ? 'text-green-500' : 'text-gray-500'} uppercase tracking-wider font-semibold">
-                        ${isOnline ? "Online" : "Offline"}
-                    </p>
-                </div>
-            `;
+                    <p class="text-[10px] ${isOnline ? 'text-green-500' : 'text-gray-500'} uppercase tracking-wider font-semibold">${isOnline ? "Online" : "Offline"}</p>
+                </div>`;
 
-            if (card) { 
-                card.innerHTML = html;
-                card.className = `p-3 rounded-xl cursor-pointer flex items-center gap-3 transition border ${bgClass}`;
-            } else {
+            if (card) { card.innerHTML = html; card.className = `p-3 rounded-xl cursor-pointer flex items-center gap-3 transition border ${bgClass}`; } 
+            else {
                 card = document.createElement("div");
                 card.id = `friend-${fData.uid}`;
                 card.className = `p-3 rounded-xl cursor-pointer flex items-center gap-3 transition border ${bgClass}`;
@@ -293,46 +281,19 @@ function renderFriendsList(friendsList, unreadMap) {
     });
 }
 
-// --- 8. SEND REQUEST BUTTON ---
-getEl('add-friend-btn').addEventListener('click', async () => {
-    const input = prompt("Enter username to add:");
-    if (!input) return;
-    try {
-        const q = query(collection(db, "users"), where("username", "==", input.toLowerCase().trim()));
-        const snapshot = await getDocs(q);
-        if (snapshot.empty) return alert("User not found");
-        
-        let friendDoc = snapshot.docs[0];
-        let friendID = friendDoc.data().uid;
-
-        if (friendID === currentUser.uid) return alert("Cannot add yourself");
-        if (currentUser.friends && currentUser.friends.includes(friendID)) return alert("Already friends!");
-
-        await updateDoc(doc(db, "users", friendID), { 
-            friendRequests: arrayUnion(currentUser.uid) 
-        });
-        alert("Friend request sent!");
-
-    } catch(e) { alert("Error: " + e.message); }
-});
-
-// --- 9. CHAT LOGIC ---
+// --- 5. CHAT & MESSAGES (CUSTOM UI) ---
 window.openChat = async (friend) => {
     selectedChatUser = friend;
     getEl('sidebar').classList.add('hidden');
     getEl('sidebar').classList.remove('flex');
     getEl('chat-area').classList.remove('hidden');
     getEl('chat-area').classList.add('flex');
-
     getEl('chat-header-name').innerText = friend.displayName;
     getEl('chat-header-img').src = friend.photoURL;
 
     if (currentUser.unread && currentUser.unread[friend.uid]) {
-        await updateDoc(doc(db, "users", currentUser.uid), {
-            [`unread.${friend.uid}`]: deleteField()
-        });
+        await updateDoc(doc(db, "users", currentUser.uid), { [`unread.${friend.uid}`]: deleteField() });
     }
-
     loadMessages();
     renderFriendsList(currentUser.friends, currentUser.unread || {}); 
 };
@@ -344,83 +305,82 @@ getEl('back-btn').addEventListener('click', () => {
     getEl('sidebar').classList.add('flex');
     getEl('chat-area').classList.add('hidden');
     getEl('chat-area').classList.remove('flex');
-    renderFriendsList(currentUser.friends, currentUser.unread || {}); 
 });
 
-function getChatID() {
-    return [currentUser.uid, selectedChatUser.uid].sort().join("_");
-}
+function getChatID() { return [currentUser.uid, selectedChatUser.uid].sort().join("_"); }
 
 function loadMessages() {
     if (unsubscribeMessages) unsubscribeMessages();
     const q = query(collection(db, "chats", getChatID(), "messages"), orderBy("createdAt", "asc"));
+    
     unsubscribeMessages = onSnapshot(q, (snapshot) => {
         const list = getEl('msg-list');
         list.innerHTML = "";
-        if (snapshot.empty) {
-            list.innerHTML = `<div class="text-center text-gray-600 mt-10 text-xs">No messages yet.</div>`;
-            return;
-        }
+        if (snapshot.empty) { list.innerHTML = `<div class="text-center text-gray-600 mt-10 text-xs">No messages yet.</div>`; return; }
+
         snapshot.forEach(doc => {
             const data = doc.data();
             const isMe = data.senderId === currentUser.uid;
-            
-            let timeString = "...";
-            if (data.createdAt && data.createdAt.seconds) {
-                timeString = new Date(data.createdAt.seconds * 1000).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
-            }
-
+            const avatarSrc = isMe ? currentUser.photoURL : selectedChatUser.photoURL;
             let contentHtml = "";
+
             if (data.type === "audio") {
-                contentHtml = `<div class="flex items-center gap-2"><span class="text-xs">🎤 Voice</span><audio controls src="${data.content}" class="h-8 w-48 rounded bg-transparent"></audio></div>`;
+                const uId = doc.id;
+                contentHtml = `
+                    <div class="audio-msg-container" id="container-${uId}">
+                        <audio id="audio-${uId}" src="${data.content}" onended="resetAudio('${uId}')"></audio>
+                        <div class="play-btn-circle" onclick="toggleAudio('${uId}')">
+                            <ion-icon id="icon-play-${uId}" name="play" class="ml-0.5 text-lg"></ion-icon>
+                            <ion-icon id="icon-pause-${uId}" name="pause" class="hidden text-lg"></ion-icon>
+                        </div>
+                        <div class="waveform-box">
+                            <div class="wave-bar"></div><div class="wave-bar"></div><div class="wave-bar"></div>
+                            <div class="wave-bar"></div><div class="wave-bar"></div><div class="wave-bar"></div>
+                            <div class="wave-bar"></div><div class="wave-bar"></div><div class="wave-bar"></div>
+                        </div>
+                        <span class="text-[9px] text-gray-400">Voice</span>
+                    </div>`;
             } else {
-                contentHtml = `<p class="break-words">${data.content}</p>`;
+                contentHtml = `<p class="text-[15px] leading-snug">${data.content}</p>`;
             }
 
             const div = document.createElement("div");
-            div.className = `flex w-full ${isMe ? 'justify-end' : 'justify-start'} mb-4`;
-            div.innerHTML = `
-                <div class="max-w-[75%] p-3 rounded-2xl text-sm shadow-sm relative group ${isMe ? 'bg-green-600 text-black rounded-tr-none' : 'bg-gray-800 text-white rounded-tl-none'}">
-                    ${contentHtml}
-                    <p class="text-[9px] opacity-60 text-right mt-1 font-mono">${timeString}</p>
-                </div>
-            `;
+            div.className = `flex w-full ${isMe ? 'justify-end' : 'justify-start'} mb-2 items-end gap-2`;
+            const avatarHtml = !isMe ? `<img src="${avatarSrc}" class="w-7 h-7 rounded-full mb-1 object-cover border border-gray-800">` : ``;
+            const bubbleColor = isMe ? 'bg-[#374151] text-white rounded-[22px] rounded-br-sm' : 'bg-[#262626] text-white rounded-[22px] rounded-bl-sm';
+            
+            div.innerHTML = `${avatarHtml}<div class="max-w-[75%] px-4 py-3 ${bubbleColor} shadow-sm relative group">${contentHtml}</div>`;
             list.appendChild(div);
         });
         setTimeout(() => list.scrollTop = list.scrollHeight, 100);
     });
 }
 
+// --- 6. ACTIONS ---
+getEl('add-friend-btn').addEventListener('click', async () => {
+    const input = prompt("Enter username to add:");
+    if (!input) return;
+    try {
+        const q = query(collection(db, "users"), where("username", "==", input.toLowerCase().trim()));
+        const snapshot = await getDocs(q);
+        if (snapshot.empty) return alert("User not found");
+        let friendID = snapshot.docs[0].data().uid;
+        if (friendID === currentUser.uid) return alert("Cannot add yourself");
+        await updateDoc(doc(db, "users", friendID), { friendRequests: arrayUnion(currentUser.uid) });
+        alert("Friend request sent!");
+    } catch(e) { alert("Error: " + e.message); }
+});
+
 getEl('send-btn').addEventListener('click', async () => {
     const input = getEl('msg-input');
     const text = input.value.trim();
     if (!text || !selectedChatUser) return;
     try {
-        await addDoc(collection(db, "chats", getChatID(), "messages"), {
-            content: text, senderId: currentUser.uid, createdAt: serverTimestamp(), type: "text"
-        });
-        await updateDoc(doc(db, "users", selectedChatUser.uid), {
-            [`unread.${currentUser.uid}`]: increment(1)
-        });
+        await addDoc(collection(db, "chats", getChatID(), "messages"), { content: text, senderId: currentUser.uid, createdAt: serverTimestamp(), type: "text" });
+        await updateDoc(doc(db, "users", selectedChatUser.uid), { [`unread.${currentUser.uid}`]: increment(1) });
         input.value = "";
-    } catch (e) { alert("SEND FAILED: " + e.message); }
-});
-
-// --- PRESENCE & AUDIO ---
-function setupPresenceSystem() {
-    setInterval(() => {
-        if (currentUser) {
-            updateDoc(doc(db, "users", currentUser.uid), { isOnline: true, lastSeen: serverTimestamp() });
-        }
-    }, 30000);
-    window.addEventListener('beforeunload', () => setOffline());
-}
-async function setOffline() {
-    if (currentUser) await updateDoc(doc(db, "users", currentUser.uid), { isOnline: false });
-}
-getEl('logout-btn').addEventListener('click', async () => {
-    await setOffline();
-    location.reload();
+        input.dispatchEvent(new Event('input')); // Reset button visibility
+    } catch (e) { alert("Send failed"); }
 });
 
 const micBtn = getEl('mic-btn');
@@ -438,15 +398,11 @@ const startRecording = async () => {
             reader.readAsDataURL(blob);
             reader.onloadend = async () => {
                 const base64 = reader.result;
-                if(base64.length > 800000) return alert("Too long!");
+                if(base64.length > 800000) return alert("Audio too long!");
                 try {
-                    await addDoc(collection(db, "chats", getChatID(), "messages"), {
-                        content: base64, senderId: currentUser.uid, createdAt: serverTimestamp(), type: "audio"
-                    });
-                    await updateDoc(doc(db, "users", selectedChatUser.uid), {
-                        [`unread.${currentUser.uid}`]: increment(1)
-                    });
-                } catch(e) { alert("Failed: " + e.message); }
+                    await addDoc(collection(db, "chats", getChatID(), "messages"), { content: base64, senderId: currentUser.uid, createdAt: serverTimestamp(), type: "audio" });
+                    await updateDoc(doc(db, "users", selectedChatUser.uid), { [`unread.${currentUser.uid}`]: increment(1) });
+                } catch(e) { alert("Audio failed"); }
             };
         };
         mediaRecorder.start();
@@ -463,4 +419,12 @@ micBtn.addEventListener('mousedown', startRecording);
 micBtn.addEventListener('mouseup', stopRecording);
 micBtn.addEventListener('touchstart', (e) => { e.preventDefault(); startRecording(); });
 micBtn.addEventListener('touchend', (e) => { e.preventDefault(); stopRecording(); });
+
+// Heartbeat
+setInterval(() => { if (currentUser) updateDoc(doc(db, "users", currentUser.uid), { isOnline: true, lastSeen: serverTimestamp() }); }, 30000);
+window.addEventListener('beforeunload', () => { if (currentUser) updateDoc(doc(db, "users", currentUser.uid), { isOnline: false }); });
+getEl('logout-btn').addEventListener('click', async () => {
+    if (currentUser) await updateDoc(doc(db, "users", currentUser.uid), { isOnline: false });
+    location.reload();
+});
 

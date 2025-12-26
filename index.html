@@ -77,14 +77,12 @@
             <div id="msg-list" class="flex-1 p-4 overflow-y-auto w-full flex flex-col gap-1 scroll-smooth"></div>
 
             <div class="p-3 bg-black shrink-0 relative border-t border-gray-900">
-                
                 <div id="lock-tooltip" class="hidden absolute bottom-20 right-4 flex flex-col items-center gap-1 animate-bounce z-40 transition-opacity duration-300">
                     <div class="bg-gray-800 p-2 rounded-full border border-gray-600 shadow-lg">
                         <ion-icon name="lock-closed" class="text-white text-lg"></ion-icon>
                     </div>
                     <ion-icon name="chevron-up" class="text-gray-500 text-sm"></ion-icon>
                 </div>
-
                 <div id="locked-ui" class="hidden absolute inset-0 bg-black z-50 flex items-center justify-between px-4 border-t border-gray-800">
                     <div class="flex items-center gap-3">
                         <div class="w-2 h-2 bg-red-500 rounded-full animate-pulse"></div>
@@ -97,18 +95,14 @@
                         </button>
                     </div>
                 </div>
-
                 <div id="input-bar" class="flex items-center gap-2 relative z-10">
-                    
                     <div class="flex-1 flex gap-2 items-center bg-[#262626] p-2 pl-4 rounded-full border border-gray-800 transition focus-within:border-gray-600">
                         <input id="msg-input" type="text" placeholder="Message..." class="flex-1 min-w-0 bg-transparent text-white placeholder-gray-500 focus:outline-none text-[15px]">
                         <button id="send-btn" class="text-white font-semibold text-sm px-3 hover:text-blue-500 transition hidden">Send</button>
                     </div>
-
                     <button id="mic-btn" class="p-3 bg-[#262626] text-white rounded-full hover:bg-gray-800 active:scale-95 transition flex items-center justify-center relative touch-none select-none">
                         <ion-icon name="mic" class="text-lg pointer-events-none"></ion-icon>
                     </button>
-                    
                     <button class="p-3 bg-[#262626] text-white rounded-full hover:bg-gray-800 transition flex items-center justify-center">
                         <ion-icon name="image" class="text-lg"></ion-icon>
                     </button>
@@ -131,6 +125,17 @@
         </div>
     </div>
 
+    <div id="msg-options-modal" class="hidden fixed inset-0 z-[60] flex items-end md:items-center justify-center bg-black/80 backdrop-blur-sm animate-fade-in">
+        <div id="close-msg-options" class="absolute inset-0"></div>
+        
+        <div class="relative w-full max-w-xs bg-[#1a1a1a] rounded-t-2xl md:rounded-2xl border border-gray-700 overflow-hidden shadow-2xl mb-0 md:mb-0 p-2 animate-slide-in">
+            <div class="p-3 text-center text-gray-500 text-xs uppercase font-bold tracking-widest">Message Options</div>
+            <button id="unsend-msg-btn" class="w-full flex items-center gap-3 p-4 text-red-500 hover:bg-red-900/20 rounded-xl transition font-semibold">
+                <ion-icon name="trash-bin" class="text-xl"></ion-icon> Unsend Message
+            </button>
+        </div>
+    </div>
+
     <script type="module" src="script.js"></script>
     <script>
         const input = document.getElementById('msg-input');
@@ -139,7 +144,6 @@
             if(input.value.trim().length > 0) sendBtn.classList.remove('hidden');
             else sendBtn.classList.add('hidden');
         });
-
         window.addEventListener('load', () => {
             setTimeout(() => {
                 const splash = document.getElementById('splash-screen');

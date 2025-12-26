@@ -24,8 +24,8 @@ let audioChunks = [];
 let selectedAvatarBase64 = null;
 let recordingTimerInterval = null;
 let pressTimer = null; 
-let longPressTimer = null; // NEW: Timer for long press
-let messageToDeleteId = null; // NEW: Track which message to delete
+let longPressTimer = null;
+let messageToDeleteId = null;
 
 const getEl = (id) => document.getElementById(id);
 
@@ -83,20 +83,49 @@ window.respondRequest = async function(targetUid, isAccepted) {
     } catch(e) { console.error(e); }
 };
 
-// --- 2. LONG PRESS (UNSEND) LOGIC ---
+// --- 2. HEADER ACTIONS (FIXED) ---
+
+// ADD FRIEND BUTTON
+getEl('add-friend-btn').addEventListener('click', async () => {
+    const input = prompt("Enter username to add:");
+    if (!input) return;
+    try {
+        const q = query(collection(db, "users"), where("username", "==", input.toLowerCase().trim()));
+        const snapshot = await getDocs(q);
+        if (snapshot.empty) return alert("User not found");
+        
+        let friendID = snapshot.docs[0].data().uid;
+        if (friendID === currentUser.uid) return alert("Cannot add yourself");
+        
+        await updateDoc(doc(db, "users", friendID), { 
+            friendRequests: arrayUnion(currentUser.uid) 
+        });
+        alert("Friend request sent!");
+    } catch(e) { alert("Error: " + e.message); }
+});
+
+// LOGOUT BUTTON
+getEl('logout-btn').addEventListener('click', async () => {
+    if (currentUser) {
+        await updateDoc(doc(db, "users", currentUser.uid), { isOnline: false });
+    }
+    location.reload();
+});
+
+// --- 3. LONG PRESS (UNSEND) LOGIC ---
 const msgOptionsModal = getEl('msg-options-modal');
 const unsendBtn = getEl('unsend-msg-btn');
 const closeMsgOptions = getEl('close-msg-options');
 
 function attachLongPress(element, msgId) {
-    // Touch Events (Mobile)
+    // Touch Events
     element.addEventListener('touchstart', (e) => {
         longPressTimer = setTimeout(() => openMessageOptions(msgId), 800);
     });
     element.addEventListener('touchend', () => clearTimeout(longPressTimer));
     element.addEventListener('touchmove', () => clearTimeout(longPressTimer));
 
-    // Mouse Events (Desktop)
+    // Mouse Events
     element.addEventListener('mousedown', () => {
         longPressTimer = setTimeout(() => openMessageOptions(msgId), 800);
     });
@@ -105,7 +134,6 @@ function attachLongPress(element, msgId) {
 }
 
 function openMessageOptions(msgId) {
-    // Vibrate if supported
     if (navigator.vibrate) navigator.vibrate(50);
     messageToDeleteId = msgId;
     msgOptionsModal.classList.remove('hidden');
@@ -122,14 +150,13 @@ unsendBtn.addEventListener('click', async () => {
         const chatId = getChatID();
         await deleteDoc(doc(db, "chats", chatId, "messages", messageToDeleteId));
         msgOptionsModal.classList.add('hidden');
-        // No alert needed, it just disappears real-time
     } catch (e) {
         alert("Error unsending: " + e.message);
     }
 });
 
 
-// --- 3. LOGIN & SETUP ---
+// --- 4. LOGIN & SETUP ---
 getEl('avatar-input').addEventListener('change', (e) => {
     const file = e.target.files[0];
     if (file) {
@@ -179,7 +206,7 @@ getEl('login-btn').addEventListener('click', async () => {
     }
 });
 
-// --- 4. DATA LOADING ---
+// --- 5. DATA LOADING ---
 function loadData() {
     onSnapshot(doc(db, "users", currentUser.uid), (docSnap) => {
         const data = docSnap.data();
@@ -258,7 +285,7 @@ function renderFriendsList(friendsList, unreadMap) {
     });
 }
 
-// --- 5. CHAT LOGIC ---
+// --- 6. CHAT LOGIC ---
 window.openChat = async (friend) => {
     selectedChatUser = friend;
     getEl('sidebar').classList.add('hidden');
@@ -328,7 +355,7 @@ function loadMessages() {
             
             // Create bubble element
             const bubbleContent = document.createElement("div");
-            bubbleContent.className = `max-w-[75%] px-4 py-3 ${bubbleColor} shadow-sm relative group cursor-pointer active:scale-95 transition-transform`;
+            bubbleContent.className = `max-w-[75%] px-4 py-3 ${bubbleColor} shadow-sm relative group cursor-pointer active:scale-95 transition-transform select-none`;
             bubbleContent.innerHTML = contentHtml;
             
             // ATTACH LONG PRESS ONLY IF IT'S MY MESSAGE
@@ -344,7 +371,7 @@ function loadMessages() {
     });
 }
 
-// --- 6. SENDING ACTIONS ---
+// --- 7. SENDING ACTIONS ---
 getEl('send-btn').addEventListener('click', async () => {
     const input = getEl('msg-input');
     const text = input.value.trim();
@@ -357,7 +384,7 @@ getEl('send-btn').addEventListener('click', async () => {
     } catch (e) { alert("Send failed"); }
 });
 
-// --- 7. RECORDING ---
+// --- 8. RECORDING ---
 const micBtn = getEl('mic-btn');
 const lockTooltip = getEl('lock-tooltip');
 const lockedUI = getEl('locked-ui');

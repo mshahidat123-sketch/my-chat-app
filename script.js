@@ -1,5 +1,5 @@
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js";
-import { getFirestore, collection, addDoc, setDoc, getDocs, doc, query, where, orderBy, onSnapshot, serverTimestamp, updateDoc, arrayUnion, arrayRemove, increment, deleteField } 
+import { getFirestore, collection, addDoc, setDoc, getDocs, doc, query, where, orderBy, onSnapshot, serverTimestamp, updateDoc, arrayUnion, arrayRemove, increment, deleteField, getDoc } 
 from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
 
 // ==========================================
@@ -22,14 +22,41 @@ let currentUser = null;
 let selectedChatUser = null;
 let unsubscribeMessages = null;
 let friendListeners = []; 
-let requestListeners = []; // NEW: Listener for requests
 let mediaRecorder = null;
 let audioChunks = [];
 let selectedAvatarBase64 = null;
 
 const getEl = (id) => document.getElementById(id);
 
-// --- 1. AVATAR UPLOAD ---
+// --- 1. GLOBALLY ACCESSIBLE REQUEST HANDLER (FIX) ---
+window.respondRequest = async function(targetUid, isAccepted) {
+    console.log("Responding to request:", targetUid, isAccepted);
+    if (!currentUser) return;
+
+    try {
+        const myRef = doc(db, "users", currentUser.uid);
+        const theirRef = doc(db, "users", targetUid);
+
+        // 1. Remove request regardless of choice
+        await updateDoc(myRef, { 
+            friendRequests: arrayRemove(targetUid) 
+        });
+
+        // 2. If Accepted, add to friends lists
+        if (isAccepted) {
+            await updateDoc(myRef, { friends: arrayUnion(targetUid) });
+            await updateDoc(theirRef, { friends: arrayUnion(currentUser.uid) });
+            alert("Friend added!");
+        } else {
+            alert("Request removed.");
+        }
+    } catch(e) { 
+        console.error("Error responding:", e);
+        alert("Error: " + e.message); 
+    }
+};
+
+// --- 2. AVATAR UPLOAD ---
 getEl('avatar-input').addEventListener('change', (e) => {
     const file = e.target.files[0];
     if (file) {
@@ -44,7 +71,7 @@ getEl('avatar-input').addEventListener('change', (e) => {
     }
 });
 
-// --- 2. LOGIN ---
+// --- 3. LOGIN ---
 getEl('login-btn').addEventListener('click', async () => {
     const username = getEl('login-username').value.trim().toLowerCase();
     if (!username) return alert("Enter a username");
@@ -58,7 +85,6 @@ getEl('login-btn').addEventListener('click', async () => {
 
         if (!snapshot.empty) {
             snapshot.forEach(doc => currentUser = doc.data());
-            // Update Avatar if changed
             if (selectedAvatarBase64) {
                 await updateDoc(doc(db, "users", currentUser.uid), { photoURL: selectedAvatarBase64 });
                 currentUser.photoURL = selectedAvatarBase64;
@@ -72,8 +98,8 @@ getEl('login-btn').addEventListener('click', async () => {
                 displayName: username,
                 photoURL: selectedAvatarBase64 || defaultAvatar,
                 friends: [],
-                friendRequests: [], // NEW: Store incoming requests
-                unread: {},         // NEW: Store unread counts like { "userId": 5 }
+                friendRequests: [], 
+                unread: {},         
                 isOnline: true,
                 createdAt: serverTimestamp()
             };
@@ -90,7 +116,7 @@ getEl('login-btn').addEventListener('click', async () => {
         getEl('app-screen').classList.remove('hidden');
         getEl('my-avatar').src = currentUser.photoURL;
         
-        loadData(); // REPLACED loadFriendsList with a main loader
+        loadData(); 
         setupPresenceSystem();
 
     } catch (err) {
@@ -101,34 +127,13 @@ getEl('login-btn').addEventListener('click', async () => {
     }
 });
 
-// --- 3. ONLINE STATUS ---
-function setupPresenceSystem() {
-    setInterval(() => {
-        if (currentUser) {
-            updateDoc(doc(db, "users", currentUser.uid), { 
-                isOnline: true,
-                lastSeen: serverTimestamp()
-            });
-        }
-    }, 30000);
-    window.addEventListener('beforeunload', () => setOffline());
-}
-
-async function setOffline() {
-    if (currentUser) await updateDoc(doc(db, "users", currentUser.uid), { isOnline: false });
-}
-
-getEl('logout-btn').addEventListener('click', async () => {
-    await setOffline();
-    location.reload();
-});
-
-// --- 4. DATA LOADING (FRIENDS + REQUESTS) ---
+// --- 4. DATA LOADING ---
 function loadData() {
-    // Listen to MY user document for Friends, Requests, and Unread Counts
     onSnapshot(doc(db, "users", currentUser.uid), (docSnap) => {
         const data = docSnap.data();
-        currentUser = data; // Keep local user updated (important for unread counts)
+        if(!data) return;
+        
+        currentUser = data; // Keep local state synced
 
         // A. Handle Requests
         const notifBar = getEl('notification-bar');
@@ -141,61 +146,52 @@ function loadData() {
             notifBar.classList.remove('flex');
         }
 
-        // B. Handle Friends List
+        // B. Handle Friends
         renderFriendsList(data.friends || [], data.unread || {});
     });
 }
 
-// --- 5. RENDER FRIEND REQUESTS ---
+// --- 5. RENDER REQUESTS (FIXED UI) ---
 async function renderRequests(requestUids) {
     const container = getEl('notification-bar');
     container.innerHTML = `<p class="p-2 text-[10px] text-gray-500 font-bold uppercase tracking-widest bg-black">Friend Requests</p>`;
     
-    // We have to fetch details for each UID in the request list
     for (const uid of requestUids) {
-        const userDoc = await getDoc(doc(db, "users", uid));
-        if (!userDoc.exists()) continue;
-        const uData = userDoc.data();
+        try {
+            const userDoc = await getDoc(doc(db, "users", uid));
+            if (!userDoc.exists()) continue;
+            const uData = userDoc.data();
 
-        const div = document.createElement('div');
-        div.className = "flex items-center justify-between p-3 bg-gray-900 hover:bg-gray-800 transition border-b border-gray-800";
-        div.innerHTML = `
-            <div class="flex items-center gap-2">
-                <img src="${uData.photoURL}" class="w-8 h-8 rounded-full">
-                <span class="text-sm font-bold text-white">${uData.displayName}</span>
-            </div>
-            <div class="flex gap-2">
-                <button onclick="respondRequest('${uData.uid}', true)" class="bg-green-600 hover:bg-green-500 p-1.5 rounded-full text-white"><svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd" /></svg></button>
-                <button onclick="respondRequest('${uData.uid}', false)" class="bg-red-900/50 hover:bg-red-600 text-red-500 hover:text-white p-1.5 rounded-full"><svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clip-rule="evenodd" /></svg></button>
-            </div>
-        `;
-        container.appendChild(div);
+            const div = document.createElement('div');
+            div.className = "flex items-center justify-between p-3 bg-gray-900 border-b border-gray-800 animate-slide-in";
+            
+            // Buttons are now explicitly visible with bright colors
+            div.innerHTML = `
+                <div class="flex items-center gap-3">
+                    <img src="${uData.photoURL}" class="w-10 h-10 rounded-full bg-gray-700 object-cover border border-gray-600">
+                    <span class="text-sm font-bold text-white">${uData.displayName}</span>
+                </div>
+                <div class="flex gap-2">
+                    <button onclick="window.respondRequest('${uData.uid}', true)" class="bg-green-600 hover:bg-green-500 text-white p-2 rounded-full shadow-lg transition active:scale-95" title="Accept">
+                        <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd" /></svg>
+                    </button>
+                    <button onclick="window.respondRequest('${uData.uid}', false)" class="bg-red-600 hover:bg-red-500 text-white p-2 rounded-full shadow-lg transition active:scale-95" title="Decline">
+                        <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clip-rule="evenodd" /></svg>
+                    </button>
+                </div>
+            `;
+            container.appendChild(div);
+        } catch(e) {
+            console.error("Error fetching request user:", e);
+        }
     }
 }
 
-// Make globally accessible for HTML buttons
-window.respondRequest = async (targetUid, isAccepted) => {
-    try {
-        const myRef = doc(db, "users", currentUser.uid);
-        const theirRef = doc(db, "users", targetUid);
-
-        // 1. Remove the request regardless of Accept/Reject
-        await updateDoc(myRef, { friendRequests: arrayRemove(targetUid) });
-
-        if (isAccepted) {
-            // 2. Add to friends lists (Both sides)
-            await updateDoc(myRef, { friends: arrayUnion(targetUid) });
-            await updateDoc(theirRef, { friends: arrayUnion(currentUser.uid) });
-        }
-    } catch(e) { console.error(e); }
-};
-
-// --- 6. RENDER FRIENDS LIST (WITH UNREAD BADGES) ---
+// --- 6. RENDER FRIENDS ---
 function renderFriendsList(friendsList, unreadMap) {
     const listEl = getEl('friend-list');
     listEl.innerHTML = "";
     
-    // Clear old listeners
     friendListeners.forEach(unsub => unsub());
     friendListeners = [];
 
@@ -216,17 +212,15 @@ function renderFriendsList(friendsList, unreadMap) {
                 isOnline = (Date.now() - lastSeenTime) < 65000;
             }
             
-            // Unread Count Logic
+            // Unread Logic
             const unreadCount = unreadMap[fData.uid] || 0;
             const unreadBadge = unreadCount > 0 
-                ? `<div class="bg-red-500 text-white text-[10px] font-bold h-5 min-w-[1.25rem] px-1 flex items-center justify-center rounded-full shadow-lg shadow-red-900">${unreadCount}</div>` 
+                ? `<div class="bg-red-500 text-white text-[10px] font-bold h-5 min-w-[1.25rem] px-1 flex items-center justify-center rounded-full shadow-lg shadow-red-900 animate-pulse">${unreadCount}</div>` 
                 : '';
             
-            // Highlight Logic
             const isActive = selectedChatUser && selectedChatUser.uid === fData.uid;
             const bgClass = isActive ? "bg-green-900/20 border-green-500/30" : "hover:bg-gray-900 border-transparent hover:border-gray-800";
 
-            // Render
             let card = document.getElementById(`friend-${fData.uid}`);
             const html = `
                 <div class="relative">
@@ -256,7 +250,6 @@ function renderFriendsList(friendsList, unreadMap) {
                 listEl.appendChild(card);
             }
 
-            // Live Header Update
             if (isActive) {
                 const statusEl = getEl('chat-header-status');
                 if(statusEl) {
@@ -269,7 +262,7 @@ function renderFriendsList(friendsList, unreadMap) {
     });
 }
 
-// --- 7. SEND REQUEST (UPDATED BUTTON) ---
+// --- 7. SEND REQUEST BUTTON ---
 getEl('add-friend-btn').addEventListener('click', async () => {
     const input = prompt("Enter username to add:");
     if (!input) return;
@@ -284,7 +277,7 @@ getEl('add-friend-btn').addEventListener('click', async () => {
         if (friendID === currentUser.uid) return alert("Cannot add yourself");
         if (currentUser.friends && currentUser.friends.includes(friendID)) return alert("Already friends!");
 
-        // Send Request: Update THEIR friendRequests array
+        // Send Request
         await updateDoc(doc(db, "users", friendID), { 
             friendRequests: arrayUnion(currentUser.uid) 
         });
@@ -293,7 +286,7 @@ getEl('add-friend-btn').addEventListener('click', async () => {
     } catch(e) { alert("Error: " + e.message); }
 });
 
-// --- 8. OPEN CHAT & CLEAR UNREAD ---
+// --- 8. OPEN CHAT ---
 window.openChat = async (friend) => {
     selectedChatUser = friend;
     getEl('sidebar').classList.add('hidden');
@@ -304,7 +297,7 @@ window.openChat = async (friend) => {
     getEl('chat-header-name').innerText = friend.displayName;
     getEl('chat-header-img').src = friend.photoURL;
 
-    // Reset Unread Count for this friend
+    // Reset Unread
     if (currentUser.unread && currentUser.unread[friend.uid]) {
         await updateDoc(doc(db, "users", currentUser.uid), {
             [`unread.${friend.uid}`]: deleteField()
@@ -312,7 +305,7 @@ window.openChat = async (friend) => {
     }
 
     loadMessages();
-    renderFriendsList(currentUser.friends, currentUser.unread || {}); // Re-render to remove badge immediately
+    renderFriendsList(currentUser.friends, currentUser.unread || {}); 
 };
 
 getEl('back-btn').addEventListener('click', () => {
@@ -322,13 +315,14 @@ getEl('back-btn').addEventListener('click', () => {
     getEl('sidebar').classList.add('flex');
     getEl('chat-area').classList.add('hidden');
     getEl('chat-area').classList.remove('flex');
-    renderFriendsList(currentUser.friends, currentUser.unread || {}); // Refresh highlights
+    renderFriendsList(currentUser.friends, currentUser.unread || {}); 
 });
 
 function getChatID() {
     return [currentUser.uid, selectedChatUser.uid].sort().join("_");
 }
 
+// --- 9. MESSAGES ---
 function loadMessages() {
     if (unsubscribeMessages) unsubscribeMessages();
     
@@ -347,7 +341,6 @@ function loadMessages() {
             const data = doc.data();
             const isMe = data.senderId === currentUser.uid;
             
-            // Time logic
             let timeString = "...";
             if (data.createdAt && data.createdAt.seconds) {
                 timeString = new Date(data.createdAt.seconds * 1000).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
@@ -376,14 +369,12 @@ function loadMessages() {
     });
 }
 
-// --- 9. SEND MESSAGE (UPDATED WITH UNREAD INCREMENT) ---
 getEl('send-btn').addEventListener('click', async () => {
     const input = getEl('msg-input');
     const text = input.value.trim();
     if (!text || !selectedChatUser) return;
     
     try {
-        // 1. Send Message
         await addDoc(collection(db, "chats", getChatID(), "messages"), {
             content: text, 
             senderId: currentUser.uid, 
@@ -391,7 +382,6 @@ getEl('send-btn').addEventListener('click', async () => {
             type: "text"
         });
 
-        // 2. Increment Unread Count on Recipient's User Doc
         await updateDoc(doc(db, "users", selectedChatUser.uid), {
             [`unread.${currentUser.uid}`]: increment(1)
         });
@@ -403,16 +393,36 @@ getEl('send-btn').addEventListener('click', async () => {
     }
 });
 
-// --- AUDIO LOGIC (UPDATED WITH UNREAD INCREMENT) ---
-const micBtn = getEl('mic-btn');
+// --- 10. HEARTBEAT ---
+function setupPresenceSystem() {
+    setInterval(() => {
+        if (currentUser) {
+            updateDoc(doc(db, "users", currentUser.uid), { 
+                isOnline: true,
+                lastSeen: serverTimestamp()
+            });
+        }
+    }, 30000);
+    window.addEventListener('beforeunload', () => setOffline());
+}
 
+async function setOffline() {
+    if (currentUser) await updateDoc(doc(db, "users", currentUser.uid), { isOnline: false });
+}
+
+getEl('logout-btn').addEventListener('click', async () => {
+    await setOffline();
+    location.reload();
+});
+
+// --- AUDIO EVENTS ---
+const micBtn = getEl('mic-btn');
 const startRecording = async () => {
     if (!navigator.mediaDevices) return alert("Mic blocked.");
     try {
         const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
         mediaRecorder = new MediaRecorder(stream);
         audioChunks = [];
-        
         mediaRecorder.ondataavailable = e => audioChunks.push(e.data);
         mediaRecorder.onstop = async () => {
             stream.getTracks().forEach(t => t.stop());
@@ -422,12 +432,10 @@ const startRecording = async () => {
             reader.onloadend = async () => {
                 const base64 = reader.result;
                 if(base64.length > 800000) return alert("Too long!");
-                
                 try {
                     await addDoc(collection(db, "chats", getChatID(), "messages"), {
                         content: base64, senderId: currentUser.uid, createdAt: serverTimestamp(), type: "audio"
                     });
-                    // Increment Unread
                     await updateDoc(doc(db, "users", selectedChatUser.uid), {
                         [`unread.${currentUser.uid}`]: increment(1)
                     });

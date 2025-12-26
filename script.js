@@ -22,23 +22,21 @@ let friendListeners = [];
 let mediaRecorder = null;
 let audioChunks = [];
 let selectedAvatarBase64 = null;
+let recordingTimerInterval = null;
 
 const getEl = (id) => document.getElementById(id);
 
-// --- 1. GLOBAL HELPERS (Audio & Requests) ---
+// --- 1. GLOBAL HELPERS ---
 window.toggleAudio = (id) => {
     const audio = document.getElementById(`audio-${id}`);
     const container = document.getElementById(`container-${id}`);
     const playIcon = document.getElementById(`icon-play-${id}`);
     const pauseIcon = document.getElementById(`icon-pause-${id}`);
 
-    // Pause others
     document.querySelectorAll('audio').forEach(a => {
         if(a.id !== `audio-${id}`) {
-            a.pause();
-            a.currentTime = 0;
-            const otherId = a.id.replace('audio-', '');
-            window.resetAudio(otherId);
+            a.pause(); a.currentTime = 0;
+            window.resetAudio(a.id.replace('audio-', ''));
         }
     });
 
@@ -76,30 +74,16 @@ window.respondRequest = async function(targetUid, isAccepted) {
             await updateDoc(theirRef, { friends: arrayUnion(currentUser.uid) });
             alert("Friend added!");
         }
-        
-        // Hide modal if empty
         if (!currentUser.friendRequests || currentUser.friendRequests.length <= 1) {
             getEl('requests-modal').classList.add('hidden');
         }
     } catch(e) { console.error(e); }
 };
 
-// --- 2. UI LOGIC ---
-const requestsBtn = getEl('requests-btn');
-const requestsModal = getEl('requests-modal');
-const closeRequestsBtn = getEl('close-requests-btn');
-
-requestsBtn.addEventListener('click', () => {
-    requestsModal.classList.remove('hidden');
-    if (currentUser && currentUser.friendRequests) renderRequestsModal(currentUser.friendRequests);
-});
-closeRequestsBtn.addEventListener('click', () => requestsModal.classList.add('hidden'));
-
-// Avatar
+// --- 2. LOGIN & SETUP ---
 getEl('avatar-input').addEventListener('change', (e) => {
     const file = e.target.files[0];
     if (file) {
-        if (file.size > 100000) return alert("Image too big! Max 100KB.");
         const reader = new FileReader();
         reader.onload = (ev) => {
             selectedAvatarBase64 = ev.target.result;
@@ -110,11 +94,9 @@ getEl('avatar-input').addEventListener('change', (e) => {
     }
 });
 
-// --- 3. LOGIN & AUTH ---
 getEl('login-btn').addEventListener('click', async () => {
     const username = getEl('login-username').value.trim().toLowerCase();
     if (!username) return alert("Enter a username");
-    
     getEl('login-btn').innerText = "Entering...";
     getEl('login-btn').disabled = true;
 
@@ -124,52 +106,37 @@ getEl('login-btn').addEventListener('click', async () => {
 
         if (!snapshot.empty) {
             snapshot.forEach(doc => currentUser = doc.data());
-            if (selectedAvatarBase64) {
-                await updateDoc(doc(db, "users", currentUser.uid), { photoURL: selectedAvatarBase64 });
-                currentUser.photoURL = selectedAvatarBase64;
-            }
+            if (selectedAvatarBase64) await updateDoc(doc(db, "users", currentUser.uid), { photoURL: selectedAvatarBase64 });
         } else {
             const newUid = "u_" + Date.now();
             const defaultAvatar = `https://ui-avatars.com/api/?name=${username}&background=22c55e&color=000`;
             const newUser = {
-                uid: newUid,
-                username: username,
-                displayName: username,
+                uid: newUid, username: username, displayName: username,
                 photoURL: selectedAvatarBase64 || defaultAvatar,
-                friends: [],
-                friendRequests: [], 
-                unread: {},         
-                isOnline: true,
-                createdAt: serverTimestamp()
+                friends: [], friendRequests: [], unread: {}, isOnline: true, createdAt: serverTimestamp()
             };
             await setDoc(doc(db, "users", newUid), newUser);
             currentUser = newUser;
         }
-
         await updateDoc(doc(db, "users", currentUser.uid), { isOnline: true, lastSeen: serverTimestamp() });
 
         getEl('login-screen').classList.add('hidden');
         getEl('app-screen').classList.remove('hidden');
         getEl('my-avatar').src = currentUser.photoURL;
-        
-        loadData(); 
-        setupPresenceSystem();
+        loadData(); setupPresenceSystem();
     } catch (err) {
-        console.error(err);
         alert("Login Error: " + err.message);
-        getEl('login-btn').innerText = "Enter Shotta";
         getEl('login-btn').disabled = false;
     }
 });
 
-// --- 4. DATA LOADING ---
+// --- 3. DATA LOADING ---
 function loadData() {
     onSnapshot(doc(db, "users", currentUser.uid), (docSnap) => {
         const data = docSnap.data();
         if(!data) return;
         currentUser = data; 
 
-        // Requests Icon
         const reqBtn = getEl('requests-btn');
         const reqBadge = getEl('requests-badge');
         if (data.friendRequests && data.friendRequests.length > 0) {
@@ -178,44 +145,9 @@ function loadData() {
             if (!getEl('requests-modal').classList.contains('hidden')) renderRequestsModal(data.friendRequests);
         } else {
             reqBtn.classList.add('hidden');
-            getEl('requests-modal').classList.add('hidden');
         }
-
         renderFriendsList(data.friends || [], data.unread || {});
     });
-}
-
-async function renderRequestsModal(requestUids) {
-    const container = getEl('requests-list-container');
-    container.innerHTML = "";
-    if (!requestUids || requestUids.length === 0) {
-        container.innerHTML = `<p class="text-center text-gray-500 py-4">No pending requests.</p>`;
-        return;
-    }
-    for (const uid of requestUids) {
-        try {
-            if (currentUser.friends.includes(uid)) {
-                updateDoc(doc(db, "users", currentUser.uid), { friendRequests: arrayRemove(uid) });
-                continue;
-            }
-            const userDoc = await getDoc(doc(db, "users", uid));
-            if (!userDoc.exists()) continue;
-            const uData = userDoc.data();
-
-            const div = document.createElement('div');
-            div.className = "flex items-center justify-between p-3 bg-gray-800 rounded-xl border border-gray-700";
-            div.innerHTML = `
-                <div class="flex items-center gap-3">
-                    <img src="${uData.photoURL}" class="w-10 h-10 rounded-full border border-gray-600 object-cover">
-                    <div class="flex flex-col"><span class="text-sm font-bold text-white">${uData.displayName}</span><span class="text-[10px] text-gray-400">Requesting...</span></div>
-                </div>
-                <div class="flex gap-2">
-                    <button onclick="window.respondRequest('${uData.uid}', true)" class="bg-green-600 hover:bg-green-500 text-white p-2 rounded-lg"><ion-icon name="checkmark"></ion-icon></button>
-                    <button onclick="window.respondRequest('${uData.uid}', false)" class="bg-red-600 hover:bg-red-500 text-white p-2 rounded-lg"><ion-icon name="close"></ion-icon></button>
-                </div>`;
-            container.appendChild(div);
-        } catch(e) {}
-    }
 }
 
 function renderFriendsList(friendsList, unreadMap) {
@@ -225,7 +157,7 @@ function renderFriendsList(friendsList, unreadMap) {
     friendListeners = [];
 
     if (!friendsList.length) {
-        listEl.innerHTML = `<div class="text-center text-gray-500 mt-10 text-xs">No chats yet. Add a friend!</div>`;
+        listEl.innerHTML = `<div class="text-center text-gray-500 mt-10 text-xs">No chats yet.</div>`;
         return;
     }
 
@@ -268,20 +200,16 @@ function renderFriendsList(friendsList, unreadMap) {
                 card.onclick = () => openChat(fData);
                 listEl.appendChild(card);
             }
-
-            if (isActive) {
-                const statusEl = getEl('chat-header-status');
-                if(statusEl) {
-                    statusEl.innerText = isOnline ? "Online" : "Offline";
-                    statusEl.className = isOnline ? "text-xs text-green-500 font-bold" : "text-xs text-gray-500";
-                }
+            if (isActive && getEl('chat-header-status')) {
+                getEl('chat-header-status').innerText = isOnline ? "Online" : "Offline";
+                getEl('chat-header-status').className = isOnline ? "text-xs text-green-500 font-bold" : "text-xs text-gray-500";
             }
         });
         friendListeners.push(unsub);
     });
 }
 
-// --- 5. CHAT & MESSAGES (CUSTOM UI) ---
+// --- 4. CHAT LOGIC ---
 window.openChat = async (friend) => {
     selectedChatUser = friend;
     getEl('sidebar').classList.add('hidden');
@@ -356,21 +284,7 @@ function loadMessages() {
     });
 }
 
-// --- 6. ACTIONS ---
-getEl('add-friend-btn').addEventListener('click', async () => {
-    const input = prompt("Enter username to add:");
-    if (!input) return;
-    try {
-        const q = query(collection(db, "users"), where("username", "==", input.toLowerCase().trim()));
-        const snapshot = await getDocs(q);
-        if (snapshot.empty) return alert("User not found");
-        let friendID = snapshot.docs[0].data().uid;
-        if (friendID === currentUser.uid) return alert("Cannot add yourself");
-        await updateDoc(doc(db, "users", friendID), { friendRequests: arrayUnion(currentUser.uid) });
-        alert("Friend request sent!");
-    } catch(e) { alert("Error: " + e.message); }
-});
-
+// --- 5. SENDING ACTIONS ---
 getEl('send-btn').addEventListener('click', async () => {
     const input = getEl('msg-input');
     const text = input.value.trim();
@@ -379,52 +293,145 @@ getEl('send-btn').addEventListener('click', async () => {
         await addDoc(collection(db, "chats", getChatID(), "messages"), { content: text, senderId: currentUser.uid, createdAt: serverTimestamp(), type: "text" });
         await updateDoc(doc(db, "users", selectedChatUser.uid), { [`unread.${currentUser.uid}`]: increment(1) });
         input.value = "";
-        input.dispatchEvent(new Event('input')); // Reset button visibility
+        input.dispatchEvent(new Event('input'));
     } catch (e) { alert("Send failed"); }
 });
 
+// --- 6. SWIPE-TO-LOCK RECORDING LOGIC ---
 const micBtn = getEl('mic-btn');
-const startRecording = async () => {
-    if (!navigator.mediaDevices) return alert("Mic blocked.");
+const lockTooltip = getEl('lock-tooltip');
+const lockedUI = getEl('locked-ui');
+const lockTimer = getEl('lock-timer');
+const inputBar = getEl('input-bar');
+
+let isRecording = false;
+let isLocked = false;
+let startY = 0;
+let startTime = 0;
+
+// HELPERS
+const updateTimer = () => {
+    const elapsed = Math.floor((Date.now() - startTime) / 1000);
+    const m = Math.floor(elapsed / 60);
+    const s = elapsed % 60;
+    lockTimer.innerText = `${m}:${s.toString().padStart(2, '0')}`;
+};
+
+const startRecordingProcess = async () => {
+    if (!navigator.mediaDevices) return alert("Mic blocked");
     try {
         const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
         mediaRecorder = new MediaRecorder(stream);
         audioChunks = [];
         mediaRecorder.ondataavailable = e => audioChunks.push(e.data);
-        mediaRecorder.onstop = async () => {
-            stream.getTracks().forEach(t => t.stop());
-            const blob = new Blob(audioChunks, { type: 'audio/webm' });
-            const reader = new FileReader();
-            reader.readAsDataURL(blob);
-            reader.onloadend = async () => {
-                const base64 = reader.result;
-                if(base64.length > 800000) return alert("Audio too long!");
-                try {
-                    await addDoc(collection(db, "chats", getChatID(), "messages"), { content: base64, senderId: currentUser.uid, createdAt: serverTimestamp(), type: "audio" });
-                    await updateDoc(doc(db, "users", selectedChatUser.uid), { [`unread.${currentUser.uid}`]: increment(1) });
-                } catch(e) { alert("Audio failed"); }
-            };
-        };
         mediaRecorder.start();
-        micBtn.classList.add('text-red-500', 'animate-pulse');
-    } catch(e) { alert("Permission Denied"); }
+        
+        isRecording = true;
+        startTime = Date.now();
+        micBtn.classList.add('mic-active');
+        lockTooltip.classList.remove('hidden'); // Show Slide Up Tooltip
+        
+        recordingTimerInterval = setInterval(updateTimer, 1000);
+    } catch(e) { alert("Mic Error: " + e.message); }
 };
-const stopRecording = () => {
-    if (mediaRecorder && mediaRecorder.state === "recording") {
-        mediaRecorder.stop();
-        micBtn.classList.remove('text-red-500', 'animate-pulse');
-    }
-};
-micBtn.addEventListener('mousedown', startRecording);
-micBtn.addEventListener('mouseup', stopRecording);
-micBtn.addEventListener('touchstart', (e) => { e.preventDefault(); startRecording(); });
-micBtn.addEventListener('touchend', (e) => { e.preventDefault(); stopRecording(); });
 
-// Heartbeat
+const stopAndSend = async () => {
+    if (!mediaRecorder || mediaRecorder.state !== 'recording') return;
+    mediaRecorder.onstop = async () => {
+        const blob = new Blob(audioChunks, { type: 'audio/webm' });
+        const reader = new FileReader();
+        reader.readAsDataURL(blob);
+        reader.onloadend = async () => {
+            const base64 = reader.result;
+            if(base64.length > 800000) return alert("Audio too long!");
+            try {
+                await addDoc(collection(db, "chats", getChatID(), "messages"), { content: base64, senderId: currentUser.uid, createdAt: serverTimestamp(), type: "audio" });
+                await updateDoc(doc(db, "users", selectedChatUser.uid), { [`unread.${currentUser.uid}`]: increment(1) });
+            } catch(e) { alert("Send failed"); }
+        };
+        // Cleanup stream tracks
+        mediaRecorder.stream.getTracks().forEach(t => t.stop());
+    };
+    mediaRecorder.stop();
+    resetRecordingUI();
+};
+
+const resetRecordingUI = () => {
+    isRecording = false;
+    isLocked = false;
+    clearInterval(recordingTimerInterval);
+    micBtn.classList.remove('mic-active');
+    lockTooltip.classList.add('hidden');
+    lockedUI.classList.add('hidden');
+    inputBar.classList.remove('invisible');
+};
+
+// EVENT LISTENERS
+micBtn.addEventListener('touchstart', (e) => {
+    e.preventDefault();
+    startY = e.touches[0].clientY;
+    startRecordingProcess();
+});
+
+micBtn.addEventListener('touchmove', (e) => {
+    if (!isRecording || isLocked) return;
+    const currentY = e.touches[0].clientY;
+    const diff = startY - currentY; // Moving Up = Positive
+
+    // Logic: Slide Lock Icon Up visual
+    lockTooltip.style.transform = `translateY(-${diff}px)`;
+
+    // Lock Threshold (e.g. 60px up)
+    if (diff > 60) {
+        isLocked = true;
+        lockTooltip.classList.add('hidden'); // Hide tooltip
+        lockedUI.classList.remove('hidden'); // Show Locked UI
+        inputBar.classList.add('invisible'); // Hide Normal Input
+    }
+});
+
+micBtn.addEventListener('touchend', (e) => {
+    e.preventDefault();
+    lockTooltip.style.transform = `translateY(0)`; // Reset position
+    if (isLocked) return; // If locked, do nothing (wait for manual send)
+    stopAndSend(); // If released without lock, send immediately
+});
+
+// Locked UI Buttons
+getEl('cancel-lock-btn').addEventListener('click', () => {
+    if(mediaRecorder) { mediaRecorder.stop(); mediaRecorder.stream.getTracks().forEach(t => t.stop()); }
+    resetRecordingUI();
+});
+getEl('send-lock-btn').addEventListener('click', () => {
+    stopAndSend();
+});
+
+// PRESENCE
 setInterval(() => { if (currentUser) updateDoc(doc(db, "users", currentUser.uid), { isOnline: true, lastSeen: serverTimestamp() }); }, 30000);
 window.addEventListener('beforeunload', () => { if (currentUser) updateDoc(doc(db, "users", currentUser.uid), { isOnline: false }); });
-getEl('logout-btn').addEventListener('click', async () => {
-    if (currentUser) await updateDoc(doc(db, "users", currentUser.uid), { isOnline: false });
-    location.reload();
-});
+
+// MODAL LOGIC
+const rModal = getEl('requests-modal');
+const rBtn = getEl('requests-btn');
+rBtn.addEventListener('click', () => { rModal.classList.remove('hidden'); if(currentUser.friendRequests) renderRequestsModal(currentUser.friendRequests); });
+getEl('close-requests-btn').addEventListener('click', () => rModal.classList.add('hidden'));
+
+async function renderRequestsModal(uids) {
+    const c = getEl('requests-list-container'); c.innerHTML = "";
+    if(!uids || !uids.length) return c.innerHTML = `<p class="text-gray-500 text-center">No requests.</p>`;
+    for(const uid of uids) {
+        try {
+            const u = await getDoc(doc(db, "users", uid));
+            if(!u.exists()) continue;
+            const d = u.data();
+            const div = document.createElement('div');
+            div.className = "flex justify-between items-center p-3 bg-gray-800 rounded-lg";
+            div.innerHTML = `
+                <div class="flex items-center gap-2"><img src="${d.photoURL}" class="w-8 h-8 rounded-full"><span class="font-bold text-sm">${d.displayName}</span></div>
+                <div class="flex gap-2"><button onclick="respondRequest('${d.uid}',true)" class="text-green-500"><ion-icon name="checkmark-circle" class="text-2xl"></ion-icon></button>
+                <button onclick="respondRequest('${d.uid}',false)" class="text-red-500"><ion-icon name="close-circle" class="text-2xl"></ion-icon></button></div>`;
+            c.appendChild(div);
+        } catch(e) {}
+    }
+}
 

@@ -40,10 +40,34 @@ window.respondRequest = async function(targetUid, isAccepted) {
             await updateDoc(theirRef, { friends: arrayUnion(currentUser.uid) });
             alert("Friend added!");
         }
+        
+        // Refresh modal if empty
+        const modal = getEl('requests-modal');
+        if (!currentUser.friendRequests || currentUser.friendRequests.length <= 1) {
+            modal.classList.add('hidden');
+        }
+
     } catch(e) { console.error(e); alert("Error: " + e.message); }
 };
 
-// --- 2. AVATAR UPLOAD ---
+// --- 2. MODAL LOGIC ---
+const requestsBtn = getEl('requests-btn');
+const requestsModal = getEl('requests-modal');
+const closeRequestsBtn = getEl('close-requests-btn');
+
+requestsBtn.addEventListener('click', () => {
+    requestsModal.classList.remove('hidden');
+    // Re-render requests when opening to ensure freshness
+    if (currentUser && currentUser.friendRequests) {
+        renderRequestsModal(currentUser.friendRequests);
+    }
+});
+
+closeRequestsBtn.addEventListener('click', () => {
+    requestsModal.classList.add('hidden');
+});
+
+// --- 3. AVATAR UPLOAD ---
 getEl('avatar-input').addEventListener('change', (e) => {
     const file = e.target.files[0];
     if (file) {
@@ -58,7 +82,7 @@ getEl('avatar-input').addEventListener('change', (e) => {
     }
 });
 
-// --- 3. LOGIN ---
+// --- 4. LOGIN ---
 getEl('login-btn').addEventListener('click', async () => {
     const username = getEl('login-username').value.trim().toLowerCase();
     if (!username) return alert("Enter a username");
@@ -114,20 +138,28 @@ getEl('login-btn').addEventListener('click', async () => {
     }
 });
 
-// --- 4. DATA LOADING ---
+// --- 5. DATA LOADING ---
 function loadData() {
     onSnapshot(doc(db, "users", currentUser.uid), (docSnap) => {
         const data = docSnap.data();
         if(!data) return;
         currentUser = data; 
 
-        // RENDER REQUESTS
+        // HANDLE REQUESTS ICON & BADGE
+        const reqBtn = getEl('requests-btn');
+        const reqBadge = getEl('requests-badge');
+        
         if (data.friendRequests && data.friendRequests.length > 0) {
-            renderRequests(data.friendRequests);
+            reqBtn.classList.remove('hidden'); // Show Bell
+            reqBadge.classList.remove('hidden'); // Show Red Dot
+            
+            // If modal is open, refresh the list live
+            if (!getEl('requests-modal').classList.contains('hidden')) {
+                renderRequestsModal(data.friendRequests);
+            }
         } else {
-            const notifBar = getEl('notification-bar');
-            notifBar.classList.add('hidden');
-            notifBar.classList.remove('flex');
+            reqBtn.classList.add('hidden'); // Hide Bell if no requests
+            getEl('requests-modal').classList.add('hidden'); // Close modal if empty
         }
 
         // RENDER FRIENDS
@@ -135,64 +167,60 @@ function loadData() {
     });
 }
 
-// --- 5. RENDER REQUESTS (FIXED & DEBUGGED) ---
-async function renderRequests(requestUids) {
-    const container = getEl('notification-bar');
+// --- 6. RENDER REQUESTS MODAL ---
+async function renderRequestsModal(requestUids) {
+    const container = getEl('requests-list-container');
+    container.innerHTML = ""; // Clear existing
     
-    // Clear and Show
-    container.innerHTML = `<p class="px-4 py-2 text-[10px] text-gray-400 font-bold uppercase tracking-widest bg-gray-900">Friend Requests</p>`;
-    container.classList.remove('hidden');
-    container.classList.add('flex');
-    
-    let validRequestFound = false;
+    if (!requestUids || requestUids.length === 0) {
+        container.innerHTML = `<p class="text-center text-gray-500 py-4">No pending requests.</p>`;
+        return;
+    }
 
     for (const uid of requestUids) {
         try {
-            // Check if already friend (clean up if so)
+            // Cleanup: If already friend, remove request
             if (currentUser.friends.includes(uid)) {
-                await updateDoc(doc(db, "users", currentUser.uid), { friendRequests: arrayRemove(uid) });
+                updateDoc(doc(db, "users", currentUser.uid), { friendRequests: arrayRemove(uid) });
                 continue;
             }
 
             const userDoc = await getDoc(doc(db, "users", uid));
             
-            // If user doesn't exist, remove the ghost request
+            // Cleanup: If user deleted, remove request
             if (!userDoc.exists()) {
-                console.log("Removing ghost request:", uid);
-                await updateDoc(doc(db, "users", currentUser.uid), { friendRequests: arrayRemove(uid) });
+                updateDoc(doc(db, "users", currentUser.uid), { friendRequests: arrayRemove(uid) });
                 continue;
             }
 
-            validRequestFound = true;
             const uData = userDoc.data();
 
             const div = document.createElement('div');
-            div.className = "flex items-center justify-between p-3 pl-4 bg-gray-800 border-b border-gray-700 animate-slide-in";
+            div.className = "flex items-center justify-between p-3 mb-2 bg-gray-800 rounded-xl border border-gray-700";
             
             div.innerHTML = `
                 <div class="flex items-center gap-3">
-                    <img src="${uData.photoURL}" class="w-10 h-10 rounded-full border-2 border-green-500 object-cover">
-                    <span class="text-sm font-bold text-white">${uData.displayName}</span>
+                    <img src="${uData.photoURL}" class="w-12 h-12 rounded-full border-2 border-gray-600 object-cover">
+                    <div class="flex flex-col">
+                        <span class="text-sm font-bold text-white">${uData.displayName}</span>
+                        <span class="text-[10px] text-gray-400">Wants to chat</span>
+                    </div>
                 </div>
                 <div class="flex gap-2">
-                    <button onclick="window.respondRequest('${uData.uid}', true)" class="bg-green-600 hover:bg-green-500 text-white p-2 px-4 rounded-lg shadow-lg font-bold text-xs uppercase tracking-wide">Accept</button>
-                    <button onclick="window.respondRequest('${uData.uid}', false)" class="bg-red-600 hover:bg-red-500 text-white p-2 px-4 rounded-lg shadow-lg font-bold text-xs uppercase tracking-wide">Decline</button>
+                    <button onclick="window.respondRequest('${uData.uid}', true)" class="bg-green-600 hover:bg-green-500 text-white p-2 rounded-lg transition shadow-lg" title="Accept">
+                        <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd" /></svg>
+                    </button>
+                    <button onclick="window.respondRequest('${uData.uid}', false)" class="bg-red-600 hover:bg-red-500 text-white p-2 rounded-lg transition shadow-lg" title="Decline">
+                        <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clip-rule="evenodd" /></svg>
+                    </button>
                 </div>
             `;
             container.appendChild(div);
-        } catch(e) {
-            console.error("Error rendering request:", e);
-        }
-    }
-
-    // Hide bar if no valid requests were found
-    if (!validRequestFound) {
-        container.classList.add('hidden');
-        container.classList.remove('flex');
+        } catch(e) { console.error(e); }
     }
 }
 
-// --- 6. RENDER FRIENDS ---
+// --- 7. RENDER FRIENDS ---
 function renderFriendsList(friendsList, unreadMap) {
     const listEl = getEl('friend-list');
     listEl.innerHTML = "";
@@ -265,7 +293,7 @@ function renderFriendsList(friendsList, unreadMap) {
     });
 }
 
-// --- 7. SEND REQUEST BUTTON ---
+// --- 8. SEND REQUEST BUTTON ---
 getEl('add-friend-btn').addEventListener('click', async () => {
     const input = prompt("Enter username to add:");
     if (!input) return;
@@ -288,7 +316,7 @@ getEl('add-friend-btn').addEventListener('click', async () => {
     } catch(e) { alert("Error: " + e.message); }
 });
 
-// --- 8. CHAT LOGIC ---
+// --- 9. CHAT LOGIC ---
 window.openChat = async (friend) => {
     selectedChatUser = friend;
     getEl('sidebar').classList.add('hidden');

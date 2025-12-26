@@ -1,5 +1,5 @@
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js";
-import { getFirestore, collection, addDoc, setDoc, getDocs, doc, query, where, orderBy, onSnapshot, serverTimestamp, updateDoc, arrayUnion, arrayRemove, increment, deleteField, getDoc } 
+import { getFirestore, collection, addDoc, setDoc, getDocs, doc, query, where, orderBy, onSnapshot, serverTimestamp, updateDoc, arrayUnion, arrayRemove, increment, deleteField, getDoc, deleteDoc } 
 from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
 
 const firebaseConfig = {
@@ -23,7 +23,9 @@ let mediaRecorder = null;
 let audioChunks = [];
 let selectedAvatarBase64 = null;
 let recordingTimerInterval = null;
-let pressTimer = null; // NEW: Timer for the 0.1s delay
+let pressTimer = null; 
+let longPressTimer = null; // NEW: Timer for long press
+let messageToDeleteId = null; // NEW: Track which message to delete
 
 const getEl = (id) => document.getElementById(id);
 
@@ -81,7 +83,53 @@ window.respondRequest = async function(targetUid, isAccepted) {
     } catch(e) { console.error(e); }
 };
 
-// --- 2. LOGIN & SETUP ---
+// --- 2. LONG PRESS (UNSEND) LOGIC ---
+const msgOptionsModal = getEl('msg-options-modal');
+const unsendBtn = getEl('unsend-msg-btn');
+const closeMsgOptions = getEl('close-msg-options');
+
+function attachLongPress(element, msgId) {
+    // Touch Events (Mobile)
+    element.addEventListener('touchstart', (e) => {
+        longPressTimer = setTimeout(() => openMessageOptions(msgId), 800);
+    });
+    element.addEventListener('touchend', () => clearTimeout(longPressTimer));
+    element.addEventListener('touchmove', () => clearTimeout(longPressTimer));
+
+    // Mouse Events (Desktop)
+    element.addEventListener('mousedown', () => {
+        longPressTimer = setTimeout(() => openMessageOptions(msgId), 800);
+    });
+    element.addEventListener('mouseup', () => clearTimeout(longPressTimer));
+    element.addEventListener('mouseleave', () => clearTimeout(longPressTimer));
+}
+
+function openMessageOptions(msgId) {
+    // Vibrate if supported
+    if (navigator.vibrate) navigator.vibrate(50);
+    messageToDeleteId = msgId;
+    msgOptionsModal.classList.remove('hidden');
+}
+
+closeMsgOptions.addEventListener('click', () => {
+    msgOptionsModal.classList.add('hidden');
+    messageToDeleteId = null;
+});
+
+unsendBtn.addEventListener('click', async () => {
+    if (!messageToDeleteId || !selectedChatUser) return;
+    try {
+        const chatId = getChatID();
+        await deleteDoc(doc(db, "chats", chatId, "messages", messageToDeleteId));
+        msgOptionsModal.classList.add('hidden');
+        // No alert needed, it just disappears real-time
+    } catch (e) {
+        alert("Error unsending: " + e.message);
+    }
+});
+
+
+// --- 3. LOGIN & SETUP ---
 getEl('avatar-input').addEventListener('change', (e) => {
     const file = e.target.files[0];
     if (file) {
@@ -131,7 +179,7 @@ getEl('login-btn').addEventListener('click', async () => {
     }
 });
 
-// --- 3. DATA LOADING ---
+// --- 4. DATA LOADING ---
 function loadData() {
     onSnapshot(doc(db, "users", currentUser.uid), (docSnap) => {
         const data = docSnap.data();
@@ -210,7 +258,7 @@ function renderFriendsList(friendsList, unreadMap) {
     });
 }
 
-// --- 4. CHAT LOGIC ---
+// --- 5. CHAT LOGIC ---
 window.openChat = async (friend) => {
     selectedChatUser = friend;
     getEl('sidebar').classList.add('hidden');
@@ -278,14 +326,25 @@ function loadMessages() {
             const avatarHtml = !isMe ? `<img src="${avatarSrc}" class="w-7 h-7 rounded-full mb-1 object-cover border border-gray-800">` : ``;
             const bubbleColor = isMe ? 'bg-[#374151] text-white rounded-[22px] rounded-br-sm' : 'bg-[#262626] text-white rounded-[22px] rounded-bl-sm';
             
-            div.innerHTML = `${avatarHtml}<div class="max-w-[75%] px-4 py-3 ${bubbleColor} shadow-sm relative group">${contentHtml}</div>`;
+            // Create bubble element
+            const bubbleContent = document.createElement("div");
+            bubbleContent.className = `max-w-[75%] px-4 py-3 ${bubbleColor} shadow-sm relative group cursor-pointer active:scale-95 transition-transform`;
+            bubbleContent.innerHTML = contentHtml;
+            
+            // ATTACH LONG PRESS ONLY IF IT'S MY MESSAGE
+            if (isMe) {
+                attachLongPress(bubbleContent, doc.id);
+            }
+
+            div.innerHTML = avatarHtml;
+            div.appendChild(bubbleContent);
             list.appendChild(div);
         });
         setTimeout(() => list.scrollTop = list.scrollHeight, 100);
     });
 }
 
-// --- 5. SENDING ACTIONS ---
+// --- 6. SENDING ACTIONS ---
 getEl('send-btn').addEventListener('click', async () => {
     const input = getEl('msg-input');
     const text = input.value.trim();
@@ -298,7 +357,7 @@ getEl('send-btn').addEventListener('click', async () => {
     } catch (e) { alert("Send failed"); }
 });
 
-// --- 6. SWIPE-TO-LOCK RECORDING LOGIC (WITH DELAY) ---
+// --- 7. RECORDING ---
 const micBtn = getEl('mic-btn');
 const lockTooltip = getEl('lock-tooltip');
 const lockedUI = getEl('locked-ui');
@@ -310,7 +369,6 @@ let isLocked = false;
 let startY = 0;
 let startTime = 0;
 
-// HELPERS
 const updateTimer = () => {
     const elapsed = Math.floor((Date.now() - startTime) / 1000);
     const m = Math.floor(elapsed / 60);
@@ -330,7 +388,7 @@ const startRecordingProcess = async () => {
         isRecording = true;
         startTime = Date.now();
         micBtn.classList.add('mic-active');
-        lockTooltip.classList.remove('hidden'); // Show Slide Up Tooltip
+        lockTooltip.classList.remove('hidden'); 
         
         recordingTimerInterval = setInterval(updateTimer, 1000);
     } catch(e) { alert("Mic Error: " + e.message); }
@@ -350,7 +408,6 @@ const stopAndSend = async () => {
                 await updateDoc(doc(db, "users", selectedChatUser.uid), { [`unread.${currentUser.uid}`]: increment(1) });
             } catch(e) { alert("Send failed"); }
         };
-        // Cleanup stream tracks
         mediaRecorder.stream.getTracks().forEach(t => t.stop());
     };
     mediaRecorder.stop();
@@ -367,12 +424,9 @@ const resetRecordingUI = () => {
     inputBar.classList.remove('invisible');
 };
 
-// EVENT LISTENERS WITH 0.1s DELAY
 micBtn.addEventListener('touchstart', (e) => {
     e.preventDefault();
     startY = e.touches[0].clientY;
-    
-    // DELAY: Start recording only after 100ms
     pressTimer = setTimeout(() => {
         startRecordingProcess();
     }, 100);
@@ -381,36 +435,24 @@ micBtn.addEventListener('touchstart', (e) => {
 micBtn.addEventListener('touchmove', (e) => {
     if (!isRecording || isLocked) return;
     const currentY = e.touches[0].clientY;
-    const diff = startY - currentY; // Moving Up = Positive
-
-    // Logic: Slide Lock Icon Up visual
+    const diff = startY - currentY;
     lockTooltip.style.transform = `translateY(-${diff}px)`;
-
-    // Lock Threshold (e.g. 60px up)
     if (diff > 60) {
         isLocked = true;
-        lockTooltip.classList.add('hidden'); // Hide tooltip
-        lockedUI.classList.remove('hidden'); // Show Locked UI
-        inputBar.classList.add('invisible'); // Hide Normal Input
+        lockTooltip.classList.add('hidden');
+        lockedUI.classList.remove('hidden');
+        inputBar.classList.add('invisible');
     }
 });
 
 micBtn.addEventListener('touchend', (e) => {
     e.preventDefault();
-    
-    // CLEAR DELAY TIMER: If touched for less than 100ms, cancel
     if (pressTimer) clearTimeout(pressTimer);
-    
-    lockTooltip.style.transform = `translateY(0)`; // Reset position
-
-    // If recording never started (tap was too fast), exit
-    if (!isRecording) return;
-    
-    if (isLocked) return; // If locked, do nothing (wait for manual send)
-    stopAndSend(); // If released without lock, send immediately
+    lockTooltip.style.transform = `translateY(0)`; 
+    if (!isRecording || isLocked) return;
+    stopAndSend();
 });
 
-// Locked UI Buttons
 getEl('cancel-lock-btn').addEventListener('click', () => {
     if(mediaRecorder) { mediaRecorder.stop(); mediaRecorder.stream.getTracks().forEach(t => t.stop()); }
     resetRecordingUI();

@@ -23,6 +23,7 @@ let mediaRecorder = null;
 let audioChunks = [];
 let selectedAvatarBase64 = null;
 let recordingTimerInterval = null;
+let pressTimer = null; // NEW: Timer for the 0.1s delay
 
 const getEl = (id) => document.getElementById(id);
 
@@ -297,7 +298,7 @@ getEl('send-btn').addEventListener('click', async () => {
     } catch (e) { alert("Send failed"); }
 });
 
-// --- 6. SWIPE-TO-LOCK RECORDING LOGIC ---
+// --- 6. SWIPE-TO-LOCK RECORDING LOGIC (WITH DELAY) ---
 const micBtn = getEl('mic-btn');
 const lockTooltip = getEl('lock-tooltip');
 const lockedUI = getEl('locked-ui');
@@ -366,11 +367,15 @@ const resetRecordingUI = () => {
     inputBar.classList.remove('invisible');
 };
 
-// EVENT LISTENERS
+// EVENT LISTENERS WITH 0.1s DELAY
 micBtn.addEventListener('touchstart', (e) => {
     e.preventDefault();
     startY = e.touches[0].clientY;
-    startRecordingProcess();
+    
+    // DELAY: Start recording only after 100ms
+    pressTimer = setTimeout(() => {
+        startRecordingProcess();
+    }, 100);
 });
 
 micBtn.addEventListener('touchmove', (e) => {
@@ -392,7 +397,15 @@ micBtn.addEventListener('touchmove', (e) => {
 
 micBtn.addEventListener('touchend', (e) => {
     e.preventDefault();
+    
+    // CLEAR DELAY TIMER: If touched for less than 100ms, cancel
+    if (pressTimer) clearTimeout(pressTimer);
+    
     lockTooltip.style.transform = `translateY(0)`; // Reset position
+
+    // If recording never started (tap was too fast), exit
+    if (!isRecording) return;
+    
     if (isLocked) return; // If locked, do nothing (wait for manual send)
     stopAndSend(); // If released without lock, send immediately
 });

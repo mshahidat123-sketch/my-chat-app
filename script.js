@@ -307,29 +307,25 @@ function loadMessages() {
         list.innerHTML = "";
         if (snapshot.empty) { list.innerHTML = `<div class="text-center text-gray-600 mt-10 text-xs">No messages yet.</div>`; return; }
 
-        // --- MARK MESSAGES AS SEEN ---
+        // MARK SEEN
         const batch = writeBatch(db);
         let hasUpdates = false;
         let lastSeenMessageId = null;
 
         snapshot.docs.forEach(docSnap => {
             const data = docSnap.data();
-            // Mark incoming messages as seen
             if (data.senderId !== currentUser.uid && !data.seen) {
                 batch.update(docSnap.ref, { seen: true });
                 hasUpdates = true;
             }
-            // Find last message sent by me that is seen
             if (data.senderId === currentUser.uid && data.seen) {
                 lastSeenMessageId = docSnap.id;
             }
         });
 
-        if (hasUpdates) {
-            try { await batch.commit(); } catch (e) { console.error("Error marking seen:", e); }
-        }
+        if (hasUpdates) { try { await batch.commit(); } catch (e) {} }
 
-        // --- RENDER MESSAGES ---
+        // RENDER
         snapshot.forEach(doc => {
             const data = doc.data();
             const isMe = data.senderId === currentUser.uid;
@@ -367,18 +363,15 @@ function loadMessages() {
             
             if (isMe) attachLongPress(bubbleContent, doc.id);
 
-            // APPEND "SEEN" LABEL
             if (isMe && doc.id === lastSeenMessageId) {
-                const messageWrapper = document.createElement("div");
-                messageWrapper.className = "flex flex-col items-end";
-                messageWrapper.appendChild(bubbleContent);
-                
+                const wrapper = document.createElement("div");
+                wrapper.className = "flex flex-col items-end";
+                wrapper.appendChild(bubbleContent);
                 const seenLabel = document.createElement('p');
                 seenLabel.className = "text-[10px] text-gray-500 text-right mt-1 mr-1 font-medium";
                 seenLabel.innerText = "Seen";
-                messageWrapper.appendChild(seenLabel);
-                
-                div.appendChild(messageWrapper);
+                wrapper.appendChild(seenLabel);
+                div.appendChild(wrapper);
             } else {
                 div.innerHTML = avatarHtml;
                 div.appendChild(bubbleContent);
@@ -395,7 +388,6 @@ getEl('send-btn').addEventListener('click', async () => {
     const text = input.value.trim();
     if (!text || !selectedChatUser) return;
     try {
-        // UPDATED: Add seen: false
         await addDoc(collection(db, "chats", getChatID(), "messages"), { content: text, senderId: currentUser.uid, createdAt: serverTimestamp(), type: "text", seen: false });
         await updateDoc(doc(db, "users", selectedChatUser.uid), { [`unread.${currentUser.uid}`]: increment(1) });
         input.value = "";
@@ -449,7 +441,6 @@ const stopAndSend = async () => {
             const base64 = reader.result;
             if(base64.length > 800000) return alert("Audio too long!");
             try {
-                // UPDATED: Add seen: false
                 await addDoc(collection(db, "chats", getChatID(), "messages"), { content: base64, senderId: currentUser.uid, createdAt: serverTimestamp(), type: "audio", seen: false });
                 await updateDoc(doc(db, "users", selectedChatUser.uid), { [`unread.${currentUser.uid}`]: increment(1) });
             } catch(e) { alert("Send failed"); }

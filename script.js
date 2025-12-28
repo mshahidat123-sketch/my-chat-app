@@ -1,5 +1,5 @@
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js";
-import { getFirestore, collection, addDoc, setDoc, getDocs, doc, query, where, orderBy, onSnapshot, serverTimestamp, updateDoc, arrayUnion, arrayRemove, increment, deleteField, getDoc, deleteDoc } 
+import { getFirestore, collection, addDoc, setDoc, getDocs, doc, query, where, orderBy, onSnapshot, serverTimestamp, updateDoc, arrayUnion, arrayRemove, increment, deleteField, getDoc, deleteDoc, writeBatch } 
 from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
 
 const firebaseConfig = {
@@ -83,9 +83,7 @@ window.respondRequest = async function(targetUid, isAccepted) {
     } catch(e) { console.error(e); }
 };
 
-// --- 2. HEADER ACTIONS (FIXED) ---
-
-// ADD FRIEND BUTTON
+// --- 2. HEADER ACTIONS ---
 getEl('add-friend-btn').addEventListener('click', async () => {
     const input = prompt("Enter username to add:");
     if (!input) return;
@@ -93,39 +91,29 @@ getEl('add-friend-btn').addEventListener('click', async () => {
         const q = query(collection(db, "users"), where("username", "==", input.toLowerCase().trim()));
         const snapshot = await getDocs(q);
         if (snapshot.empty) return alert("User not found");
-        
         let friendID = snapshot.docs[0].data().uid;
         if (friendID === currentUser.uid) return alert("Cannot add yourself");
-        
-        await updateDoc(doc(db, "users", friendID), { 
-            friendRequests: arrayUnion(currentUser.uid) 
-        });
+        await updateDoc(doc(db, "users", friendID), { friendRequests: arrayUnion(currentUser.uid) });
         alert("Friend request sent!");
     } catch(e) { alert("Error: " + e.message); }
 });
 
-// LOGOUT BUTTON
 getEl('logout-btn').addEventListener('click', async () => {
-    if (currentUser) {
-        await updateDoc(doc(db, "users", currentUser.uid), { isOnline: false });
-    }
+    if (currentUser) await updateDoc(doc(db, "users", currentUser.uid), { isOnline: false });
     location.reload();
 });
 
-// --- 3. LONG PRESS (UNSEND) LOGIC ---
+// --- 3. UNSEND LOGIC ---
 const msgOptionsModal = getEl('msg-options-modal');
 const unsendBtn = getEl('unsend-msg-btn');
 const closeMsgOptions = getEl('close-msg-options');
 
 function attachLongPress(element, msgId) {
-    // Touch Events
     element.addEventListener('touchstart', (e) => {
         longPressTimer = setTimeout(() => openMessageOptions(msgId), 800);
     });
     element.addEventListener('touchend', () => clearTimeout(longPressTimer));
     element.addEventListener('touchmove', () => clearTimeout(longPressTimer));
-
-    // Mouse Events
     element.addEventListener('mousedown', () => {
         longPressTimer = setTimeout(() => openMessageOptions(msgId), 800);
     });
@@ -150,11 +138,8 @@ unsendBtn.addEventListener('click', async () => {
         const chatId = getChatID();
         await deleteDoc(doc(db, "chats", chatId, "messages", messageToDeleteId));
         msgOptionsModal.classList.add('hidden');
-    } catch (e) {
-        alert("Error unsending: " + e.message);
-    }
+    } catch (e) { alert("Error unsending: " + e.message); }
 });
-
 
 // --- 4. LOGIN & SETUP ---
 getEl('avatar-input').addEventListener('change', (e) => {
@@ -185,7 +170,9 @@ getEl('login-btn').addEventListener('click', async () => {
             if (selectedAvatarBase64) await updateDoc(doc(db, "users", currentUser.uid), { photoURL: selectedAvatarBase64 });
         } else {
             const newUid = "u_" + Date.now();
-            const defaultAvatar = `https://ui-avatars.com/api/?name=${username}&background=22c55e&color=000`;
+            // UPDATED: New Default Avatar Icon
+            const defaultAvatar = "data:image/svg+xml;charset=UTF-8,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3e%3ccircle cx='12' cy='12' r='12' fill='%23BDBDBD'/%3e%3cpath fill='%23FFFFFF' d='M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z'/%3e%3c/svg%3e";
+            
             const newUser = {
                 uid: newUid, username: username, displayName: username,
                 photoURL: selectedAvatarBase64 || defaultAvatar,
@@ -212,7 +199,6 @@ function loadData() {
         const data = docSnap.data();
         if(!data) return;
         currentUser = data; 
-
         const reqBtn = getEl('requests-btn');
         const reqBadge = getEl('requests-badge');
         if (data.friendRequests && data.friendRequests.length > 0) {
@@ -247,7 +233,6 @@ function renderFriendsList(friendsList, unreadMap) {
                 const diff = Date.now() - (fData.lastSeen.toMillis ? fData.lastSeen.toMillis() : 0);
                 isOnline = diff < 65000;
             }
-            
             const unreadCount = unreadMap[fData.uid] || 0;
             const unreadBadge = unreadCount > 0 ? `<div class="bg-red-500 text-white text-[10px] font-bold h-5 min-w-[1.25rem] px-1 flex items-center justify-center rounded-full shadow-lg shadow-red-900">${unreadCount}</div>` : '';
             const isActive = selectedChatUser && selectedChatUser.uid === fData.uid;
@@ -317,11 +302,34 @@ function loadMessages() {
     if (unsubscribeMessages) unsubscribeMessages();
     const q = query(collection(db, "chats", getChatID(), "messages"), orderBy("createdAt", "asc"));
     
-    unsubscribeMessages = onSnapshot(q, (snapshot) => {
+    unsubscribeMessages = onSnapshot(q, async (snapshot) => {
         const list = getEl('msg-list');
         list.innerHTML = "";
         if (snapshot.empty) { list.innerHTML = `<div class="text-center text-gray-600 mt-10 text-xs">No messages yet.</div>`; return; }
 
+        // --- MARK MESSAGES AS SEEN ---
+        const batch = writeBatch(db);
+        let hasUpdates = false;
+        let lastSeenMessageId = null;
+
+        snapshot.docs.forEach(docSnap => {
+            const data = docSnap.data();
+            // Mark incoming messages as seen
+            if (data.senderId !== currentUser.uid && !data.seen) {
+                batch.update(docSnap.ref, { seen: true });
+                hasUpdates = true;
+            }
+            // Find last message sent by me that is seen
+            if (data.senderId === currentUser.uid && data.seen) {
+                lastSeenMessageId = docSnap.id;
+            }
+        });
+
+        if (hasUpdates) {
+            try { await batch.commit(); } catch (e) { console.error("Error marking seen:", e); }
+        }
+
+        // --- RENDER MESSAGES ---
         snapshot.forEach(doc => {
             const data = doc.data();
             const isMe = data.senderId === currentUser.uid;
@@ -353,18 +361,28 @@ function loadMessages() {
             const avatarHtml = !isMe ? `<img src="${avatarSrc}" class="w-7 h-7 rounded-full mb-1 object-cover border border-gray-800">` : ``;
             const bubbleColor = isMe ? 'bg-[#374151] text-white rounded-[22px] rounded-br-sm' : 'bg-[#262626] text-white rounded-[22px] rounded-bl-sm';
             
-            // Create bubble element
             const bubbleContent = document.createElement("div");
             bubbleContent.className = `max-w-[75%] px-4 py-3 ${bubbleColor} shadow-sm relative group cursor-pointer active:scale-95 transition-transform select-none`;
             bubbleContent.innerHTML = contentHtml;
             
-            // ATTACH LONG PRESS ONLY IF IT'S MY MESSAGE
-            if (isMe) {
-                attachLongPress(bubbleContent, doc.id);
-            }
+            if (isMe) attachLongPress(bubbleContent, doc.id);
 
-            div.innerHTML = avatarHtml;
-            div.appendChild(bubbleContent);
+            // APPEND "SEEN" LABEL
+            if (isMe && doc.id === lastSeenMessageId) {
+                const messageWrapper = document.createElement("div");
+                messageWrapper.className = "flex flex-col items-end";
+                messageWrapper.appendChild(bubbleContent);
+                
+                const seenLabel = document.createElement('p');
+                seenLabel.className = "text-[10px] text-gray-500 text-right mt-1 mr-1 font-medium";
+                seenLabel.innerText = "Seen";
+                messageWrapper.appendChild(seenLabel);
+                
+                div.appendChild(messageWrapper);
+            } else {
+                div.innerHTML = avatarHtml;
+                div.appendChild(bubbleContent);
+            }
             list.appendChild(div);
         });
         setTimeout(() => list.scrollTop = list.scrollHeight, 100);
@@ -377,14 +395,14 @@ getEl('send-btn').addEventListener('click', async () => {
     const text = input.value.trim();
     if (!text || !selectedChatUser) return;
     try {
-        await addDoc(collection(db, "chats", getChatID(), "messages"), { content: text, senderId: currentUser.uid, createdAt: serverTimestamp(), type: "text" });
+        // UPDATED: Add seen: false
+        await addDoc(collection(db, "chats", getChatID(), "messages"), { content: text, senderId: currentUser.uid, createdAt: serverTimestamp(), type: "text", seen: false });
         await updateDoc(doc(db, "users", selectedChatUser.uid), { [`unread.${currentUser.uid}`]: increment(1) });
         input.value = "";
         input.dispatchEvent(new Event('input'));
     } catch (e) { alert("Send failed"); }
 });
 
-// --- 8. RECORDING ---
 const micBtn = getEl('mic-btn');
 const lockTooltip = getEl('lock-tooltip');
 const lockedUI = getEl('locked-ui');
@@ -431,7 +449,8 @@ const stopAndSend = async () => {
             const base64 = reader.result;
             if(base64.length > 800000) return alert("Audio too long!");
             try {
-                await addDoc(collection(db, "chats", getChatID(), "messages"), { content: base64, senderId: currentUser.uid, createdAt: serverTimestamp(), type: "audio" });
+                // UPDATED: Add seen: false
+                await addDoc(collection(db, "chats", getChatID(), "messages"), { content: base64, senderId: currentUser.uid, createdAt: serverTimestamp(), type: "audio", seen: false });
                 await updateDoc(doc(db, "users", selectedChatUser.uid), { [`unread.${currentUser.uid}`]: increment(1) });
             } catch(e) { alert("Send failed"); }
         };
@@ -488,11 +507,9 @@ getEl('send-lock-btn').addEventListener('click', () => {
     stopAndSend();
 });
 
-// PRESENCE
 setInterval(() => { if (currentUser) updateDoc(doc(db, "users", currentUser.uid), { isOnline: true, lastSeen: serverTimestamp() }); }, 30000);
 window.addEventListener('beforeunload', () => { if (currentUser) updateDoc(doc(db, "users", currentUser.uid), { isOnline: false }); });
 
-// MODAL LOGIC
 const rModal = getEl('requests-modal');
 const rBtn = getEl('requests-btn');
 rBtn.addEventListener('click', () => { rModal.classList.remove('hidden'); if(currentUser.friendRequests) renderRequestsModal(currentUser.friendRequests); });

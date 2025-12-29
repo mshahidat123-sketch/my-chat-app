@@ -29,13 +29,69 @@ let messageToDeleteId = null;
 
 const getEl = (id) => document.getElementById(id);
 
-// --- 1. GLOBAL HELPERS ---
+// --- 1. AUDIO PLAYER LOGIC (UPDATED) ---
+
+// Format seconds to 0:00
+function formatTime(seconds) {
+    if(isNaN(seconds) || seconds === Infinity) return "0:00";
+    const m = Math.floor(seconds / 60);
+    const s = Math.floor(seconds % 60);
+    return `${m}:${s.toString().padStart(2, '0')}`;
+}
+
+// Called when audio metadata loads (to show duration)
+window.setAudioDuration = (id) => {
+    const audio = document.getElementById(`audio-${id}`);
+    const durationEl = document.getElementById(`duration-${id}`);
+    if (audio && durationEl) {
+        durationEl.innerText = formatTime(audio.duration);
+    }
+};
+
+// Called repeatedly while playing
+window.updateAudioProgress = (id) => {
+    const audio = document.getElementById(`audio-${id}`);
+    const playhead = document.getElementById(`playhead-${id}`);
+    const durationEl = document.getElementById(`duration-${id}`);
+    const waveformBox = document.getElementById(`waveform-${id}`);
+    
+    if (!audio) return;
+
+    // Update Time Text
+    const timeLeft = audio.duration - audio.currentTime;
+    durationEl.innerText = formatTime(timeLeft);
+
+    // Calculate Percentage
+    const percent = (audio.currentTime / audio.duration) * 100;
+
+    // Move Playhead Line
+    if (playhead) {
+        playhead.style.display = 'block';
+        playhead.style.left = `${percent}%`;
+    }
+
+    // Color the Bars (Gray -> White)
+    if (waveformBox) {
+        const bars = waveformBox.querySelectorAll('.wave-bar');
+        const totalBars = bars.length;
+        const activeBarsCount = Math.floor((percent / 100) * totalBars);
+
+        bars.forEach((bar, index) => {
+            if (index < activeBarsCount) {
+                bar.classList.add('played');
+            } else {
+                bar.classList.remove('played');
+            }
+        });
+    }
+};
+
 window.toggleAudio = (id) => {
     const audio = document.getElementById(`audio-${id}`);
-    const container = document.getElementById(`container-${id}`);
     const playIcon = document.getElementById(`icon-play-${id}`);
     const pauseIcon = document.getElementById(`icon-pause-${id}`);
 
+    // Pause all other audios
     document.querySelectorAll('audio').forEach(a => {
         if(a.id !== `audio-${id}`) {
             a.pause(); a.currentTime = 0;
@@ -45,24 +101,35 @@ window.toggleAudio = (id) => {
 
     if (audio.paused) {
         audio.play();
-        container.classList.add('playing');
         playIcon.classList.add('hidden');
         pauseIcon.classList.remove('hidden');
     } else {
         audio.pause();
-        container.classList.remove('playing');
         playIcon.classList.remove('hidden');
         pauseIcon.classList.add('hidden');
     }
 };
 
 window.resetAudio = (id) => {
-    const container = document.getElementById(`container-${id}`);
     const playIcon = document.getElementById(`icon-play-${id}`);
     const pauseIcon = document.getElementById(`icon-pause-${id}`);
-    if(container) container.classList.remove('playing');
+    const playhead = document.getElementById(`playhead-${id}`);
+    const waveformBox = document.getElementById(`waveform-${id}`);
+    
     if(playIcon) playIcon.classList.remove('hidden');
     if(pauseIcon) pauseIcon.classList.add('hidden');
+    if(playhead) {
+        playhead.style.display = 'none';
+        playhead.style.left = '0%';
+    }
+    // Reset bars to gray
+    if(waveformBox) {
+        waveformBox.querySelectorAll('.wave-bar').forEach(b => b.classList.remove('played'));
+    }
+    // Reset duration text
+    const audio = document.getElementById(`audio-${id}`);
+    const durationEl = document.getElementById(`duration-${id}`);
+    if(audio && durationEl) durationEl.innerText = formatTime(audio.duration);
 };
 
 window.respondRequest = async function(targetUid, isAccepted) {
@@ -170,7 +237,6 @@ getEl('login-btn').addEventListener('click', async () => {
             if (selectedAvatarBase64) await updateDoc(doc(db, "users", currentUser.uid), { photoURL: selectedAvatarBase64 });
         } else {
             const newUid = "u_" + Date.now();
-            // UPDATED: New Default Avatar Icon
             const defaultAvatar = "data:image/svg+xml;charset=UTF-8,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3e%3ccircle cx='12' cy='12' r='12' fill='%23BDBDBD'/%3e%3cpath fill='%23FFFFFF' d='M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z'/%3e%3c/svg%3e";
             
             const newUser = {
@@ -334,19 +400,23 @@ function loadMessages() {
 
             if (data.type === "audio") {
                 const uId = doc.id;
+                // UPDATED AUDIO HTML with Playhead Line
                 contentHtml = `
                     <div class="audio-msg-container" id="container-${uId}">
-                        <audio id="audio-${uId}" src="${data.content}" onended="resetAudio('${uId}')"></audio>
+                        <audio id="audio-${uId}" src="${data.content}" onended="resetAudio('${uId}')" onloadedmetadata="setAudioDuration('${uId}')" ontimeupdate="updateAudioProgress('${uId}')"></audio>
                         <div class="play-btn-circle" onclick="toggleAudio('${uId}')">
                             <ion-icon id="icon-play-${uId}" name="play" class="ml-0.5 text-lg"></ion-icon>
                             <ion-icon id="icon-pause-${uId}" name="pause" class="hidden text-lg"></ion-icon>
                         </div>
-                        <div class="waveform-box">
-                            <div class="wave-bar"></div><div class="wave-bar"></div><div class="wave-bar"></div>
-                            <div class="wave-bar"></div><div class="wave-bar"></div><div class="wave-bar"></div>
-                            <div class="wave-bar"></div><div class="wave-bar"></div><div class="wave-bar"></div>
+                        <div class="waveform-box" id="waveform-${uId}">
+                            <div id="playhead-${uId}" class="playhead-line"></div>
+                            
+                            <div class="wave-bar"></div><div class="wave-bar"></div><div class="wave-bar"></div><div class="wave-bar"></div>
+                            <div class="wave-bar"></div><div class="wave-bar"></div><div class="wave-bar"></div><div class="wave-bar"></div>
+                            <div class="wave-bar"></div><div class="wave-bar"></div><div class="wave-bar"></div><div class="wave-bar"></div>
+                            <div class="wave-bar"></div><div class="wave-bar"></div><div class="wave-bar"></div><div class="wave-bar"></div>
                         </div>
-                        <span class="text-[9px] text-gray-400">Voice</span>
+                        <span id="duration-${uId}" class="audio-duration">...</span>
                     </div>`;
             } else {
                 contentHtml = `<p class="text-[15px] leading-snug">${data.content}</p>`;
@@ -363,6 +433,7 @@ function loadMessages() {
             
             if (isMe) attachLongPress(bubbleContent, doc.id);
 
+            // SEEN STATUS LABEL
             if (isMe && doc.id === lastSeenMessageId) {
                 const wrapper = document.createElement("div");
                 wrapper.className = "flex flex-col items-end";

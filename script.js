@@ -29,7 +29,20 @@ let messageToDeleteId = null;
 
 const getEl = (id) => document.getElementById(id);
 
-// --- 1. GLOBAL HELPERS ---
+// --- 1. CRITICAL FIX: PRESENCE SYSTEM FUNCTION DEFINED FIRST ---
+function setupPresenceSystem() {
+    setInterval(() => {
+        if (currentUser) {
+            updateDoc(doc(db, "users", currentUser.uid), { isOnline: true, lastSeen: serverTimestamp() });
+        }
+    }, 30000);
+
+    window.addEventListener('beforeunload', () => {
+        if (currentUser) updateDoc(doc(db, "users", currentUser.uid), { isOnline: false });
+    });
+}
+
+// --- 2. GLOBAL HELPERS ---
 function formatTime(seconds) {
     if(isNaN(seconds) || seconds === Infinity) return "0:00";
     const m = Math.floor(seconds / 60);
@@ -51,7 +64,7 @@ window.updateAudioProgress = (id) => {
     
     if (!audio) return;
     
-    // Update Timer
+    // Update Timer (Count Down style like Instagram)
     const timeLeft = audio.duration - audio.currentTime;
     if(durationEl) durationEl.innerText = formatTime(timeLeft);
 
@@ -129,7 +142,7 @@ window.respondRequest = async function(targetUid, isAccepted) {
     } catch(e) { console.error(e); }
 };
 
-// --- 2. HEADER ACTIONS ---
+// --- 3. HEADER ACTIONS ---
 getEl('add-friend-btn').addEventListener('click', async () => {
     const input = prompt("Enter username to add:");
     if (!input) return;
@@ -149,7 +162,7 @@ getEl('logout-btn').addEventListener('click', async () => {
     location.reload();
 });
 
-// --- 3. UNSEND LOGIC ---
+// --- 4. UNSEND LOGIC ---
 const msgOptionsModal = getEl('msg-options-modal');
 const unsendBtn = getEl('unsend-msg-btn');
 const closeMsgOptions = getEl('close-msg-options');
@@ -187,7 +200,7 @@ unsendBtn.addEventListener('click', async () => {
     } catch (e) { alert("Error unsending: " + e.message); }
 });
 
-// --- 4. LOGIN ---
+// --- 5. LOGIN & SETUP ---
 getEl('avatar-input').addEventListener('change', (e) => {
     const file = e.target.files[0];
     if (file) {
@@ -231,14 +244,14 @@ getEl('login-btn').addEventListener('click', async () => {
         getEl('app-screen').classList.remove('hidden');
         getEl('my-avatar').src = currentUser.photoURL;
         loadData(); 
-        setupPresenceSystem(); // This caused the error before because it wasn't defined
+        setupPresenceSystem();
     } catch (err) {
         alert("Login Error: " + err.message);
         getEl('login-btn').disabled = false;
     }
 });
 
-// --- 5. DATA & CHAT ---
+// --- 6. DATA LOADING ---
 function loadData() {
     onSnapshot(doc(db, "users", currentUser.uid), (docSnap) => {
         const data = docSnap.data();
@@ -314,6 +327,7 @@ function renderFriendsList(friendsList, unreadMap) {
     });
 }
 
+// --- 7. CHAT LOGIC ---
 window.openChat = async (friend) => {
     selectedChatUser = friend;
     getEl('sidebar').classList.add('hidden');
@@ -350,6 +364,7 @@ function loadMessages() {
         list.innerHTML = "";
         if (snapshot.empty) { list.innerHTML = `<div class="text-center text-gray-600 mt-10 text-xs">No messages yet.</div>`; return; }
 
+        // MARK SEEN
         const batch = writeBatch(db);
         let hasUpdates = false;
         let lastSeenMessageId = null;
@@ -367,6 +382,7 @@ function loadMessages() {
 
         if (hasUpdates) { try { await batch.commit(); } catch (e) {} }
 
+        // RENDER
         snapshot.forEach(doc => {
             const data = doc.data();
             const isMe = data.senderId === currentUser.uid;
@@ -384,6 +400,7 @@ function loadMessages() {
                         </div>
                         <div class="waveform-box" id="waveform-${uId}">
                             <div id="playhead-${uId}" class="playhead-line"></div>
+                            
                             <div class="wave-bar"></div><div class="wave-bar"></div><div class="wave-bar"></div><div class="wave-bar"></div>
                             <div class="wave-bar"></div><div class="wave-bar"></div><div class="wave-bar"></div><div class="wave-bar"></div>
                             <div class="wave-bar"></div><div class="wave-bar"></div><div class="wave-bar"></div><div class="wave-bar"></div>
@@ -425,7 +442,7 @@ function loadMessages() {
     });
 }
 
-// --- 7. SENDING ACTIONS ---
+// --- 8. SENDING ACTIONS ---
 getEl('send-btn').addEventListener('click', async () => {
     const input = getEl('msg-input');
     const text = input.value.trim();
@@ -563,18 +580,5 @@ async function renderRequestsModal(uids) {
             c.appendChild(div);
         } catch(e) {}
     }
-}
-
-// --- 8. DEFINE PRESENCE SYSTEM ---
-function setupPresenceSystem() {
-    setInterval(() => {
-        if (currentUser) {
-            updateDoc(doc(db, "users", currentUser.uid), { isOnline: true, lastSeen: serverTimestamp() });
-        }
-    }, 30000);
-
-    window.addEventListener('beforeunload', () => {
-        if (currentUser) updateDoc(doc(db, "users", currentUser.uid), { isOnline: false });
-    });
 }
 

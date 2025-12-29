@@ -1,81 +1,167 @@
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+/* style.css */
 
-body { font-family: 'Inter', sans-serif; background-color: #000; }
-
-/* --- ANIMATIONS --- */
-.fade-out { opacity: 0; pointer-events: none; transition: opacity 0.8s ease-out; }
-@keyframes slideIn { from { transform: translateY(20px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
-.animate-slide-in { animation: slideIn 0.6s cubic-bezier(0.16, 1, 0.3, 1) forwards; }
-.animate-fade-in { animation: slideIn 0.2s ease-out forwards; }
-
-@keyframes breathe {
-    0%, 100% { transform: scale(1); filter: drop-shadow(0 0 10px rgba(74, 222, 128, 0.2)); }
-    50% { transform: scale(1.05); filter: drop-shadow(0 0 25px rgba(74, 222, 128, 0.6)); }
+/* Custom Scrollbar for a cleaner look */
+::-webkit-scrollbar {
+    width: 6px;
 }
-.logo-anim { animation: breathe 3s infinite ease-in-out; }
+::-webkit-scrollbar-track {
+    background: #000; 
+}
+::-webkit-scrollbar-thumb {
+    background: #333; 
+    border-radius: 10px;
+}
+::-webkit-scrollbar-thumb:hover {
+    background: #555; 
+}
 
-/* --- SCROLLBARS --- */
-::-webkit-scrollbar { width: 6px; }
-::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb { background: #333; border-radius: 10px; }
+/* Glassmorphism Panel */
+.glass-panel {
+    background: rgba(255, 255, 255, 0.05);
+    backdrop-filter: blur(16px);
+    -webkit-backdrop-filter: blur(16px);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+}
 
-/* --- CUSTOM AUDIO PLAYER --- */
-.audio-msg-container {
+/* Animations */
+.animate-slide-in {
+    animation: slideUp 0.6s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+.animate-fade-in {
+    animation: fadeIn 0.3s ease-out forwards;
+}
+
+.fade-out {
+    animation: fadeOut 0.8s ease-out forwards;
+    pointer-events: none;
+}
+
+/* Keyframes */
+@keyframes slideUp {
+    from {
+        opacity: 0;
+        transform: translateY(40px) scale(0.95);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0) scale(1);
+    }
+}
+
+@keyframes fadeIn {
+    from { opacity: 0; }
+    to { opacity: 1; }
+}
+
+@keyframes fadeOut {
+    from { opacity: 1; }
+    to { opacity: 0; }
+}
+
+/* Logo Animation (Heartbeat) */
+.logo-anim img {
+    animation: heartbeat 2s infinite ease-in-out;
+}
+
+@keyframes heartbeat {
+    0% { transform: scale(1); }
+    50% { transform: scale(1.05); }
+    100% { transform: scale(1); }
+}
+
+/* --- Message Bubbles (General) --- */
+.msg-bubble {
+    max-width: 75%;
+    padding: 10px 16px;
+    border-radius: 22px; /* More rounded like Instagram */
+    font-size: 15px;
+    line-height: 1.4;
+    position: relative;
+    word-wrap: break-word;
+}
+
+.msg-sent {
+    background: #3b82f6; /* Blue 500 */
+    color: white;
+    border-bottom-right-radius: 4px;
+    align-self: flex-end;
+}
+
+.msg-received {
+    background: #262626; /* Neutral 800 */
+    color: #e5e5e5;
+    border-bottom-left-radius: 4px;
+    align-self: flex-start;
+}
+
+/* --- Instagram-Style Voice Message Bubbles --- */
+.voice-msg-bubble {
     display: flex;
     align-items: center;
     gap: 12px;
-    min-width: 220px;
-    padding: 6px 0;
+    padding: 10px 14px;
+    min-width: 180px;
 }
 
-.play-btn-circle {
-    width: 36px; height: 36px; border-radius: 50%; background-color: white; color: black;
-    display: flex; align-items: center; justify-content: center; cursor: pointer; flex-shrink: 0; transition: transform 0.1s;
+/* Play/Pause Button */
+.play-pause-btn {
+    background: rgba(0, 0, 0, 0.1);
+    border-radius: 50%;
+    width: 36px;
+    height: 36px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: background 0.2s, transform 0.1s;
+    flex-shrink: 0;
+    cursor: pointer;
 }
-.play-btn-circle:active { transform: scale(0.9); }
-
-/* WAVEFORM BOX */
-.waveform-box {
-    display: flex; align-items: center; gap: 3px; height: 24px; flex: 1; position: relative;
+.play-pause-btn:active {
+    transform: scale(0.95);
 }
-
-/* PLAYHEAD LINE */
-.playhead-line {
-    position: absolute;
-    left: 0; top: -4px; bottom: -4px;
-    width: 2px;
-    background-color: white;
-    z-index: 10;
-    pointer-events: none;
-    display: none; /* Hidden until playing */
-    box-shadow: 0 0 4px rgba(255,255,255,0.5);
-    transition: left 0.1s linear;
+.msg-sent .play-pause-btn {
+    background: rgba(255, 255, 255, 0.2);
 }
-
-/* BARS */
-.wave-bar {
-    width: 3px; background-color: #6b7280; /* Gray unplayed */
-    border-radius: 2px;
-    transition: background-color 0.1s;
-}
-.wave-bar.played { background-color: white; }
-
-.wave-bar:nth-child(odd) { height: 60%; }
-.wave-bar:nth-child(even) { height: 100%; }
-.wave-bar:nth-child(3n) { height: 40%; }
-.wave-bar:nth-child(4n) { height: 80%; }
-
-/* DURATION TIMER */
-.audio-duration {
-    font-size: 11px; color: #d1d5db; font-family: monospace; min-width: 35px; text-align: right;
+.play-pause-btn ion-icon {
+    font-size: 18px;
 }
 
-/* RECORDING STATES */
-.mic-active {
-    background-color: #ef4444 !important; transform: scale(1.2); box-shadow: 0 0 15px rgba(239, 68, 68, 0.5);
+/* Waveform Container */
+.waveform-container {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    gap: 3px;
+    height: 24px;
 }
-.glass-panel {
-    background: rgba(20, 20, 20, 0.7); backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px);
-    border: 1px solid rgba(255, 255, 255, 0.1);
+
+/* Individual Waveform Bar */
+.waveform-bar {
+    width: 3px;
+    background-color: rgba(255, 255, 255, 0.3); /* Inactive color for received */
+    border-radius: 3px;
+    transition: background-color 0.3s ease-in-out;
+}
+.msg-sent .waveform-bar {
+    background-color: rgba(255, 255, 255, 0.5); /* Inactive color for sent */
+}
+
+/* Playing State for Bars */
+.waveform-bar.playing {
+    background-color: #3b82f6; /* Active color for received */
+}
+.msg-sent .waveform-bar.playing {
+    background-color: #ffffff; /* Active color for sent */
+}
+
+/* Duration text */
+.duration {
+    font-size: 12px;
+    font-weight: 500;
+    opacity: 0.8;
+    min-width: 35px;
+    text-align: right;
+    font-variant-numeric: tabular-nums; /* Prevents jitter when numbers change */
 }
 

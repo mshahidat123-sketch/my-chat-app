@@ -29,7 +29,7 @@ let messageToDeleteId = null;
 
 const getEl = (id) => document.getElementById(id);
 
-// --- 1. CRITICAL FIX: PRESENCE SYSTEM FUNCTION DEFINED FIRST ---
+// --- 1. CRITICAL FIX: DEFINE PRESENCE FUNCTION FIRST ---
 function setupPresenceSystem() {
     setInterval(() => {
         if (currentUser) {
@@ -58,27 +58,20 @@ window.setAudioDuration = (id) => {
 
 window.updateAudioProgress = (id) => {
     const audio = document.getElementById(`audio-${id}`);
-    const playhead = document.getElementById(`playhead-${id}`);
-    const waveform = document.getElementById(`waveform-${id}`);
     const durationEl = document.getElementById(`duration-${id}`);
+    const waveform = document.getElementById(`waveform-${id}`);
     
     if (!audio) return;
     
-    // Update Timer (Count Down style like Instagram)
+    // Timer Logic
     const timeLeft = audio.duration - audio.currentTime;
     if(durationEl) durationEl.innerText = formatTime(timeLeft);
 
-    // Update Line Position
-    const percent = (audio.currentTime / audio.duration) * 100;
-    if(playhead) {
-        playhead.style.display = 'block';
-        playhead.style.left = `${percent}%`;
-    }
-
-    // Color bars
+    // Waveform Coloring Logic
     if(waveform) {
-        const bars = waveform.querySelectorAll('.wave-bar');
-        const activeCount = Math.floor((percent/100) * bars.length);
+        const bars = waveform.querySelectorAll('.insta-bar');
+        const percent = audio.currentTime / audio.duration;
+        const activeCount = Math.floor(percent * bars.length);
         bars.forEach((bar, idx) => {
             if(idx < activeCount) bar.classList.add('played');
             else bar.classList.remove('played');
@@ -112,15 +105,13 @@ window.toggleAudio = (id) => {
 window.resetAudio = (id) => {
     const playIcon = document.getElementById(`icon-play-${id}`);
     const pauseIcon = document.getElementById(`icon-pause-${id}`);
-    const playhead = document.getElementById(`playhead-${id}`);
     const waveform = document.getElementById(`waveform-${id}`);
     const durationEl = document.getElementById(`duration-${id}`);
     const audio = document.getElementById(`audio-${id}`);
 
     if(playIcon) playIcon.classList.remove('hidden');
     if(pauseIcon) pauseIcon.classList.add('hidden');
-    if(playhead) { playhead.style.display = 'none'; playhead.style.left = '0%'; }
-    if(waveform) waveform.querySelectorAll('.wave-bar').forEach(b => b.classList.remove('played'));
+    if(waveform) waveform.querySelectorAll('.insta-bar').forEach(b => b.classList.remove('played'));
     if(audio && durationEl) durationEl.innerText = formatTime(audio.duration);
 };
 
@@ -142,7 +133,7 @@ window.respondRequest = async function(targetUid, isAccepted) {
     } catch(e) { console.error(e); }
 };
 
-// --- 3. HEADER ACTIONS ---
+// --- 3. ACTIONS ---
 getEl('add-friend-btn').addEventListener('click', async () => {
     const input = prompt("Enter username to add:");
     if (!input) return;
@@ -162,7 +153,7 @@ getEl('logout-btn').addEventListener('click', async () => {
     location.reload();
 });
 
-// --- 4. UNSEND LOGIC ---
+// --- 4. UNSEND ---
 const msgOptionsModal = getEl('msg-options-modal');
 const unsendBtn = getEl('unsend-msg-btn');
 const closeMsgOptions = getEl('close-msg-options');
@@ -200,7 +191,7 @@ unsendBtn.addEventListener('click', async () => {
     } catch (e) { alert("Error unsending: " + e.message); }
 });
 
-// --- 5. LOGIN & SETUP ---
+// --- 5. LOGIN ---
 getEl('avatar-input').addEventListener('change', (e) => {
     const file = e.target.files[0];
     if (file) {
@@ -229,7 +220,7 @@ getEl('login-btn').addEventListener('click', async () => {
             if (selectedAvatarBase64) await updateDoc(doc(db, "users", currentUser.uid), { photoURL: selectedAvatarBase64 });
         } else {
             const newUid = "u_" + Date.now();
-            const defaultAvatar = "data:image/svg+xml;charset=UTF-8,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3e%3ccircle cx='12' cy='12' r='12' fill='%23BDBDBD'/%3e%3cpath fill='%23FFFFFF' d='M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z'/%3e%3c/svg%3e";
+            const defaultAvatar = "data:image/svg+xml;charset=UTF-8,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3e%3ccircle cx='12' cy='12' r='12' fill='%236B7280'/%3e%3cpath fill='%23E5E7EB' d='M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z'/%3e%3c/svg%3e";
             const newUser = {
                 uid: newUid, username: username, displayName: username,
                 photoURL: selectedAvatarBase64 || defaultAvatar,
@@ -244,7 +235,7 @@ getEl('login-btn').addEventListener('click', async () => {
         getEl('app-screen').classList.remove('hidden');
         getEl('my-avatar').src = currentUser.photoURL;
         loadData(); 
-        setupPresenceSystem();
+        setupPresenceSystem(); // Now this function is definitely defined above
     } catch (err) {
         alert("Login Error: " + err.message);
         getEl('login-btn').disabled = false;
@@ -327,7 +318,7 @@ function renderFriendsList(friendsList, unreadMap) {
     });
 }
 
-// --- 7. CHAT LOGIC ---
+// --- 7. CHAT & MESSAGES ---
 window.openChat = async (friend) => {
     selectedChatUser = friend;
     getEl('sidebar').classList.add('hidden');
@@ -364,7 +355,6 @@ function loadMessages() {
         list.innerHTML = "";
         if (snapshot.empty) { list.innerHTML = `<div class="text-center text-gray-600 mt-10 text-xs">No messages yet.</div>`; return; }
 
-        // MARK SEEN
         const batch = writeBatch(db);
         let hasUpdates = false;
         let lastSeenMessageId = null;
@@ -382,7 +372,6 @@ function loadMessages() {
 
         if (hasUpdates) { try { await batch.commit(); } catch (e) {} }
 
-        // RENDER
         snapshot.forEach(doc => {
             const data = doc.data();
             const isMe = data.senderId === currentUser.uid;
@@ -391,22 +380,31 @@ function loadMessages() {
 
             if (data.type === "audio") {
                 const uId = doc.id;
+                // INSTAGRAM STYLE STRUCTURE
                 contentHtml = `
-                    <div class="audio-msg-container" id="container-${uId}">
-                        <audio id="audio-${uId}" src="${data.content}" onended="resetAudio('${uId}')" onloadedmetadata="setAudioDuration('${uId}')" ontimeupdate="updateAudioProgress('${uId}')"></audio>
-                        <div class="play-btn-circle" onclick="toggleAudio('${uId}')">
-                            <ion-icon id="icon-play-${uId}" name="play" class="ml-0.5 text-lg"></ion-icon>
-                            <ion-icon id="icon-pause-${uId}" name="pause" class="hidden text-lg"></ion-icon>
-                        </div>
-                        <div class="waveform-box" id="waveform-${uId}">
-                            <div id="playhead-${uId}" class="playhead-line"></div>
+                    <div class="insta-audio-wrapper">
+                        <div class="insta-audio-container" id="container-${uId}">
+                            <audio id="audio-${uId}" src="${data.content}" onended="resetAudio('${uId}')" onloadedmetadata="setAudioDuration('${uId}')" ontimeupdate="updateAudioProgress('${uId}')"></audio>
                             
-                            <div class="wave-bar"></div><div class="wave-bar"></div><div class="wave-bar"></div><div class="wave-bar"></div>
-                            <div class="wave-bar"></div><div class="wave-bar"></div><div class="wave-bar"></div><div class="wave-bar"></div>
-                            <div class="wave-bar"></div><div class="wave-bar"></div><div class="wave-bar"></div><div class="wave-bar"></div>
-                            <div class="wave-bar"></div><div class="wave-bar"></div><div class="wave-bar"></div><div class="wave-bar"></div>
+                            <div class="insta-play-btn" onclick="toggleAudio('${uId}')">
+                                <ion-icon id="icon-play-${uId}" name="play" class="text-xl"></ion-icon>
+                                <ion-icon id="icon-pause-${uId}" name="pause" class="text-xl hidden"></ion-icon>
+                            </div>
+                            
+                            <div class="insta-waveform" id="waveform-${uId}">
+                                <div class="insta-bar"></div><div class="insta-bar"></div><div class="insta-bar"></div>
+                                <div class="insta-bar"></div><div class="insta-bar"></div><div class="insta-bar"></div>
+                                <div class="insta-bar"></div><div class="insta-bar"></div><div class="insta-bar"></div>
+                                <div class="insta-bar"></div><div class="insta-bar"></div><div class="insta-bar"></div>
+                                <div class="insta-bar"></div><div class="insta-bar"></div><div class="insta-bar"></div>
+                            </div>
+
+                            <div class="insta-meta">
+                                <span id="duration-${uId}" class="insta-duration">...</span>
+                                <span class="insta-speed-pill">1x</span>
+                            </div>
                         </div>
-                        <span id="duration-${uId}" class="audio-duration">...</span>
+                        <p class="transcription-text">View transcription</p>
                     </div>`;
             } else {
                 contentHtml = `<p class="text-[15px] leading-snug">${data.content}</p>`;
@@ -418,7 +416,7 @@ function loadMessages() {
             const bubbleColor = isMe ? 'bg-[#374151] text-white rounded-[22px] rounded-br-sm' : 'bg-[#262626] text-white rounded-[22px] rounded-bl-sm';
             
             const bubbleContent = document.createElement("div");
-            bubbleContent.className = `max-w-[75%] px-4 py-3 ${bubbleColor} shadow-sm relative group cursor-pointer active:scale-95 transition-transform select-none`;
+            bubbleContent.className = `max-w-[85%] px-4 py-2 ${bubbleColor} shadow-sm relative group cursor-pointer active:scale-95 transition-transform select-none`;
             bubbleContent.innerHTML = contentHtml;
             
             if (isMe) attachLongPress(bubbleContent, doc.id);
@@ -442,7 +440,7 @@ function loadMessages() {
     });
 }
 
-// --- 8. SENDING ACTIONS ---
+// --- 8. SENDING ---
 getEl('send-btn').addEventListener('click', async () => {
     const input = getEl('msg-input');
     const text = input.value.trim();
@@ -557,28 +555,4 @@ getEl('cancel-lock-btn').addEventListener('click', () => {
 getEl('send-lock-btn').addEventListener('click', () => {
     stopAndSend();
 });
-
-const rModal = getEl('requests-modal');
-const rBtn = getEl('requests-btn');
-rBtn.addEventListener('click', () => { rModal.classList.remove('hidden'); if(currentUser.friendRequests) renderRequestsModal(currentUser.friendRequests); });
-getEl('close-requests-btn').addEventListener('click', () => rModal.classList.add('hidden'));
-
-async function renderRequestsModal(uids) {
-    const c = getEl('requests-list-container'); c.innerHTML = "";
-    if(!uids || !uids.length) return c.innerHTML = `<p class="text-gray-500 text-center">No requests.</p>`;
-    for(const uid of uids) {
-        try {
-            const u = await getDoc(doc(db, "users", uid));
-            if(!u.exists()) continue;
-            const d = u.data();
-            const div = document.createElement('div');
-            div.className = "flex justify-between items-center p-3 bg-gray-800 rounded-lg";
-            div.innerHTML = `
-                <div class="flex items-center gap-2"><img src="${d.photoURL}" class="w-8 h-8 rounded-full"><span class="font-bold text-sm">${d.displayName}</span></div>
-                <div class="flex gap-2"><button onclick="respondRequest('${d.uid}',true)" class="text-green-500"><ion-icon name="checkmark-circle" class="text-2xl"></ion-icon></button>
-                <button onclick="respondRequest('${d.uid}',false)" class="text-red-500"><ion-icon name="close-circle" class="text-2xl"></ion-icon></button></div>`;
-            c.appendChild(div);
-        } catch(e) {}
-    }
-}
 

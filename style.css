@@ -19,55 +19,86 @@ body { font-family: 'Inter', sans-serif; background-color: #000; }
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: #333; border-radius: 10px; }
 
-/* --- CUSTOM AUDIO PLAYER --- */
-.audio-msg-container {
+/* --- INSTAGRAM VOICE MESSAGE STYLE --- */
+.insta-audio-wrapper {
+    display: flex;
+    flex-direction: column;
+    min-width: 200px;
+}
+
+.insta-audio-container {
     display: flex;
     align-items: center;
     gap: 12px;
-    min-width: 220px;
-    padding: 6px 0;
+    padding: 8px 0;
 }
 
-.play-btn-circle {
-    width: 36px; height: 36px; border-radius: 50%; background-color: white; color: black;
-    display: flex; align-items: center; justify-content: center; cursor: pointer; flex-shrink: 0; transition: transform 0.1s;
-}
-.play-btn-circle:active { transform: scale(0.9); }
-
-/* WAVEFORM BOX */
-.waveform-box {
-    display: flex; align-items: center; gap: 3px; height: 24px; flex: 1; position: relative;
-}
-
-/* PLAYHEAD LINE */
-.playhead-line {
-    position: absolute;
-    left: 0; top: -4px; bottom: -4px;
-    width: 2px;
-    background-color: white;
-    z-index: 10;
-    pointer-events: none;
-    display: none; /* Hidden until playing */
-    box-shadow: 0 0 4px rgba(255,255,255,0.5);
-    transition: left 0.1s linear;
+.insta-play-btn {
+    width: 32px;
+    height: 32px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: white;
+    cursor: pointer;
+    flex-shrink: 0;
 }
 
-/* BARS */
-.wave-bar {
-    width: 3px; background-color: #6b7280; /* Gray unplayed */
-    border-radius: 2px;
-    transition: background-color 0.1s;
+.insta-waveform {
+    display: flex;
+    align-items: center;
+    gap: 3px;
+    height: 24px;
+    flex: 1;
 }
-.wave-bar.played { background-color: white; }
 
-.wave-bar:nth-child(odd) { height: 60%; }
-.wave-bar:nth-child(even) { height: 100%; }
-.wave-bar:nth-child(3n) { height: 40%; }
-.wave-bar:nth-child(4n) { height: 80%; }
+.insta-bar {
+    width: 3px;
+    background-color: #525252; /* Dark Grey (Unplayed) */
+    border-radius: 99px;
+    transition: background-color 0.15s;
+}
 
-/* DURATION TIMER */
-.audio-duration {
-    font-size: 11px; color: #d1d5db; font-family: monospace; min-width: 35px; text-align: right;
+/* When played, turns white */
+.insta-bar.played {
+    background-color: #ffffff;
+}
+
+/* Random heights for the wave effect */
+.insta-bar:nth-child(odd) { height: 60%; }
+.insta-bar:nth-child(even) { height: 100%; }
+.insta-bar:nth-child(3n) { height: 40%; }
+.insta-bar:nth-child(4n) { height: 80%; }
+
+.insta-meta {
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    gap: 4px;
+    margin-left: 4px;
+}
+
+.insta-duration {
+    font-size: 11px;
+    color: #e5e5e5;
+    font-weight: 500;
+}
+
+.insta-speed-pill {
+    font-size: 10px;
+    background-color: #333;
+    padding: 2px 6px;
+    border-radius: 10px;
+    color: white;
+    font-weight: bold;
+}
+
+.transcription-text {
+    font-size: 11px;
+    color: #a3a3a3;
+    margin-top: 4px;
+    margin-left: 4px;
 }
 
 /* RECORDING STATES */

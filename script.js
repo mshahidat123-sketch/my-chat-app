@@ -30,8 +30,6 @@ let messageToDeleteId = null;
 const getEl = (id) => document.getElementById(id);
 
 // --- 1. GLOBAL HELPERS ---
-
-// Helper to format time (e.g., 65s -> 1:05)
 function formatTime(seconds) {
     if(isNaN(seconds) || seconds === Infinity) return "0:00";
     const m = Math.floor(seconds / 60);
@@ -39,50 +37,47 @@ function formatTime(seconds) {
     return `${m}:${s.toString().padStart(2, '0')}`;
 }
 
-// Called when audio metadata loads to show duration
 window.setAudioDuration = (id) => {
     const audio = document.getElementById(`audio-${id}`);
     const durationEl = document.getElementById(`duration-${id}`);
-    if (audio && durationEl) {
-        durationEl.innerText = formatTime(audio.duration);
-    }
+    if (audio && durationEl) durationEl.innerText = formatTime(audio.duration);
 };
 
-// Called repeatedly as audio plays to update waveform and timer
 window.updateAudioProgress = (id) => {
     const audio = document.getElementById(`audio-${id}`);
+    const playhead = document.getElementById(`playhead-${id}`);
+    const waveform = document.getElementById(`waveform-${id}`);
     const durationEl = document.getElementById(`duration-${id}`);
-    const waveformBox = document.getElementById(`waveform-${id}`);
     
     if (!audio) return;
-
-    // Update Timer text
+    
+    // Update Timer
     const timeLeft = audio.duration - audio.currentTime;
-    durationEl.innerText = formatTime(timeLeft);
+    if(durationEl) durationEl.innerText = formatTime(timeLeft);
 
-    // Update Waveform bars
-    if (waveformBox) {
-        const bars = waveformBox.querySelectorAll('.wave-bar');
-        const percent = audio.currentTime / audio.duration;
-        const activeBarsCount = Math.floor(percent * bars.length);
+    // Update Line Position
+    const percent = (audio.currentTime / audio.duration) * 100;
+    if(playhead) {
+        playhead.style.display = 'block';
+        playhead.style.left = `${percent}%`;
+    }
 
-        bars.forEach((bar, index) => {
-            if (index < activeBarsCount) {
-                bar.classList.add('played');
-            } else {
-                bar.classList.remove('played');
-            }
+    // Color bars
+    if(waveform) {
+        const bars = waveform.querySelectorAll('.wave-bar');
+        const activeCount = Math.floor((percent/100) * bars.length);
+        bars.forEach((bar, idx) => {
+            if(idx < activeCount) bar.classList.add('played');
+            else bar.classList.remove('played');
         });
     }
 };
-
 
 window.toggleAudio = (id) => {
     const audio = document.getElementById(`audio-${id}`);
     const playIcon = document.getElementById(`icon-play-${id}`);
     const pauseIcon = document.getElementById(`icon-pause-${id}`);
 
-    // Pause all other audios first
     document.querySelectorAll('audio').forEach(a => {
         if(a.id !== `audio-${id}`) {
             a.pause(); a.currentTime = 0;
@@ -104,21 +99,16 @@ window.toggleAudio = (id) => {
 window.resetAudio = (id) => {
     const playIcon = document.getElementById(`icon-play-${id}`);
     const pauseIcon = document.getElementById(`icon-pause-${id}`);
-    const waveformBox = document.getElementById(`waveform-${id}`);
+    const playhead = document.getElementById(`playhead-${id}`);
+    const waveform = document.getElementById(`waveform-${id}`);
     const durationEl = document.getElementById(`duration-${id}`);
     const audio = document.getElementById(`audio-${id}`);
 
     if(playIcon) playIcon.classList.remove('hidden');
     if(pauseIcon) pauseIcon.classList.add('hidden');
-    
-    // Reset bars back to unplayed state
-    if(waveformBox) {
-        waveformBox.querySelectorAll('.wave-bar').forEach(b => b.classList.remove('played'));
-    }
-    // Reset duration text back to full length
-    if(audio && durationEl) {
-        durationEl.innerText = formatTime(audio.duration);
-    }
+    if(playhead) { playhead.style.display = 'none'; playhead.style.left = '0%'; }
+    if(waveform) waveform.querySelectorAll('.wave-bar').forEach(b => b.classList.remove('played'));
+    if(audio && durationEl) durationEl.innerText = formatTime(audio.duration);
 };
 
 window.respondRequest = async function(targetUid, isAccepted) {
@@ -197,7 +187,7 @@ unsendBtn.addEventListener('click', async () => {
     } catch (e) { alert("Error unsending: " + e.message); }
 });
 
-// --- 4. LOGIN & SETUP ---
+// --- 4. LOGIN ---
 getEl('avatar-input').addEventListener('change', (e) => {
     const file = e.target.files[0];
     if (file) {
@@ -226,9 +216,7 @@ getEl('login-btn').addEventListener('click', async () => {
             if (selectedAvatarBase64) await updateDoc(doc(db, "users", currentUser.uid), { photoURL: selectedAvatarBase64 });
         } else {
             const newUid = "u_" + Date.now();
-            // UPDATED: New Default Avatar Icon
             const defaultAvatar = "data:image/svg+xml;charset=UTF-8,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3e%3ccircle cx='12' cy='12' r='12' fill='%23BDBDBD'/%3e%3cpath fill='%23FFFFFF' d='M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z'/%3e%3c/svg%3e";
-            
             const newUser = {
                 uid: newUid, username: username, displayName: username,
                 photoURL: selectedAvatarBase64 || defaultAvatar,
@@ -242,14 +230,15 @@ getEl('login-btn').addEventListener('click', async () => {
         getEl('login-screen').classList.add('hidden');
         getEl('app-screen').classList.remove('hidden');
         getEl('my-avatar').src = currentUser.photoURL;
-        loadData(); setupPresenceSystem();
+        loadData(); 
+        setupPresenceSystem(); // This caused the error before because it wasn't defined
     } catch (err) {
         alert("Login Error: " + err.message);
         getEl('login-btn').disabled = false;
     }
 });
 
-// --- 5. DATA LOADING ---
+// --- 5. DATA & CHAT ---
 function loadData() {
     onSnapshot(doc(db, "users", currentUser.uid), (docSnap) => {
         const data = docSnap.data();
@@ -283,7 +272,6 @@ function renderFriendsList(friendsList, unreadMap) {
         const unsub = onSnapshot(doc(db, "users", friendUid), (fSnap) => {
             if (!fSnap.exists()) return;
             const fData = fSnap.data();
-            
             let isOnline = false;
             if (fData.lastSeen) {
                 const diff = Date.now() - (fData.lastSeen.toMillis ? fData.lastSeen.toMillis() : 0);
@@ -326,7 +314,6 @@ function renderFriendsList(friendsList, unreadMap) {
     });
 }
 
-// --- 6. CHAT LOGIC ---
 window.openChat = async (friend) => {
     selectedChatUser = friend;
     getEl('sidebar').classList.add('hidden');
@@ -363,7 +350,6 @@ function loadMessages() {
         list.innerHTML = "";
         if (snapshot.empty) { list.innerHTML = `<div class="text-center text-gray-600 mt-10 text-xs">No messages yet.</div>`; return; }
 
-        // MARK SEEN
         const batch = writeBatch(db);
         let hasUpdates = false;
         let lastSeenMessageId = null;
@@ -381,7 +367,6 @@ function loadMessages() {
 
         if (hasUpdates) { try { await batch.commit(); } catch (e) {} }
 
-        // RENDER
         snapshot.forEach(doc => {
             const data = doc.data();
             const isMe = data.senderId === currentUser.uid;
@@ -390,7 +375,6 @@ function loadMessages() {
 
             if (data.type === "audio") {
                 const uId = doc.id;
-                // UPDATED AUDIO HTML STRUCTURE
                 contentHtml = `
                     <div class="audio-msg-container" id="container-${uId}">
                         <audio id="audio-${uId}" src="${data.content}" onended="resetAudio('${uId}')" onloadedmetadata="setAudioDuration('${uId}')" ontimeupdate="updateAudioProgress('${uId}')"></audio>
@@ -399,6 +383,7 @@ function loadMessages() {
                             <ion-icon id="icon-pause-${uId}" name="pause" class="hidden text-lg"></ion-icon>
                         </div>
                         <div class="waveform-box" id="waveform-${uId}">
+                            <div id="playhead-${uId}" class="playhead-line"></div>
                             <div class="wave-bar"></div><div class="wave-bar"></div><div class="wave-bar"></div><div class="wave-bar"></div>
                             <div class="wave-bar"></div><div class="wave-bar"></div><div class="wave-bar"></div><div class="wave-bar"></div>
                             <div class="wave-bar"></div><div class="wave-bar"></div><div class="wave-bar"></div><div class="wave-bar"></div>
@@ -556,9 +541,6 @@ getEl('send-lock-btn').addEventListener('click', () => {
     stopAndSend();
 });
 
-setInterval(() => { if (currentUser) updateDoc(doc(db, "users", currentUser.uid), { isOnline: true, lastSeen: serverTimestamp() }); }, 30000);
-window.addEventListener('beforeunload', () => { if (currentUser) updateDoc(doc(db, "users", currentUser.uid), { isOnline: false }); });
-
 const rModal = getEl('requests-modal');
 const rBtn = getEl('requests-btn');
 rBtn.addEventListener('click', () => { rModal.classList.remove('hidden'); if(currentUser.friendRequests) renderRequestsModal(currentUser.friendRequests); });
@@ -581,5 +563,18 @@ async function renderRequestsModal(uids) {
             c.appendChild(div);
         } catch(e) {}
     }
+}
+
+// --- 8. DEFINE PRESENCE SYSTEM ---
+function setupPresenceSystem() {
+    setInterval(() => {
+        if (currentUser) {
+            updateDoc(doc(db, "users", currentUser.uid), { isOnline: true, lastSeen: serverTimestamp() });
+        }
+    }, 30000);
+
+    window.addEventListener('beforeunload', () => {
+        if (currentUser) updateDoc(doc(db, "users", currentUser.uid), { isOnline: false });
+    });
 }
 

@@ -30,12 +30,59 @@ let messageToDeleteId = null;
 const getEl = (id) => document.getElementById(id);
 
 // --- 1. GLOBAL HELPERS ---
+
+// Helper to format time (e.g., 65s -> 1:05)
+function formatTime(seconds) {
+    if(isNaN(seconds) || seconds === Infinity) return "0:00";
+    const m = Math.floor(seconds / 60);
+    const s = Math.floor(seconds % 60);
+    return `${m}:${s.toString().padStart(2, '0')}`;
+}
+
+// Called when audio metadata loads to show duration
+window.setAudioDuration = (id) => {
+    const audio = document.getElementById(`audio-${id}`);
+    const durationEl = document.getElementById(`duration-${id}`);
+    if (audio && durationEl) {
+        durationEl.innerText = formatTime(audio.duration);
+    }
+};
+
+// Called repeatedly as audio plays to update waveform and timer
+window.updateAudioProgress = (id) => {
+    const audio = document.getElementById(`audio-${id}`);
+    const durationEl = document.getElementById(`duration-${id}`);
+    const waveformBox = document.getElementById(`waveform-${id}`);
+    
+    if (!audio) return;
+
+    // Update Timer text
+    const timeLeft = audio.duration - audio.currentTime;
+    durationEl.innerText = formatTime(timeLeft);
+
+    // Update Waveform bars
+    if (waveformBox) {
+        const bars = waveformBox.querySelectorAll('.wave-bar');
+        const percent = audio.currentTime / audio.duration;
+        const activeBarsCount = Math.floor(percent * bars.length);
+
+        bars.forEach((bar, index) => {
+            if (index < activeBarsCount) {
+                bar.classList.add('played');
+            } else {
+                bar.classList.remove('played');
+            }
+        });
+    }
+};
+
+
 window.toggleAudio = (id) => {
     const audio = document.getElementById(`audio-${id}`);
-    const container = document.getElementById(`container-${id}`);
     const playIcon = document.getElementById(`icon-play-${id}`);
     const pauseIcon = document.getElementById(`icon-pause-${id}`);
 
+    // Pause all other audios first
     document.querySelectorAll('audio').forEach(a => {
         if(a.id !== `audio-${id}`) {
             a.pause(); a.currentTime = 0;
@@ -45,24 +92,33 @@ window.toggleAudio = (id) => {
 
     if (audio.paused) {
         audio.play();
-        container.classList.add('playing');
         playIcon.classList.add('hidden');
         pauseIcon.classList.remove('hidden');
     } else {
         audio.pause();
-        container.classList.remove('playing');
         playIcon.classList.remove('hidden');
         pauseIcon.classList.add('hidden');
     }
 };
 
 window.resetAudio = (id) => {
-    const container = document.getElementById(`container-${id}`);
     const playIcon = document.getElementById(`icon-play-${id}`);
     const pauseIcon = document.getElementById(`icon-pause-${id}`);
-    if(container) container.classList.remove('playing');
+    const waveformBox = document.getElementById(`waveform-${id}`);
+    const durationEl = document.getElementById(`duration-${id}`);
+    const audio = document.getElementById(`audio-${id}`);
+
     if(playIcon) playIcon.classList.remove('hidden');
     if(pauseIcon) pauseIcon.classList.add('hidden');
+    
+    // Reset bars back to unplayed state
+    if(waveformBox) {
+        waveformBox.querySelectorAll('.wave-bar').forEach(b => b.classList.remove('played'));
+    }
+    // Reset duration text back to full length
+    if(audio && durationEl) {
+        durationEl.innerText = formatTime(audio.duration);
+    }
 };
 
 window.respondRequest = async function(targetUid, isAccepted) {
@@ -170,8 +226,8 @@ getEl('login-btn').addEventListener('click', async () => {
             if (selectedAvatarBase64) await updateDoc(doc(db, "users", currentUser.uid), { photoURL: selectedAvatarBase64 });
         } else {
             const newUid = "u_" + Date.now();
-            // UPDATED: Use same generic avatar for new users
-            const defaultAvatar = "data:image/svg+xml;charset=UTF-8,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3e%3ccircle cx='12' cy='12' r='12' fill='%236B7280'/%3e%3cpath fill='%23E5E7EB' d='M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z'/%3e%3c/svg%3e";
+            // UPDATED: New Default Avatar Icon
+            const defaultAvatar = "data:image/svg+xml;charset=UTF-8,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3e%3ccircle cx='12' cy='12' r='12' fill='%23BDBDBD'/%3e%3cpath fill='%23FFFFFF' d='M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z'/%3e%3c/svg%3e";
             
             const newUser = {
                 uid: newUid, username: username, displayName: username,
@@ -307,27 +363,25 @@ function loadMessages() {
         list.innerHTML = "";
         if (snapshot.empty) { list.innerHTML = `<div class="text-center text-gray-600 mt-10 text-xs">No messages yet.</div>`; return; }
 
-        // --- SEEN LOGIC ---
+        // MARK SEEN
         const batch = writeBatch(db);
         let hasUpdates = false;
         let lastSeenMessageId = null;
 
-        // 1. Mark incoming messages as seen
         snapshot.docs.forEach(docSnap => {
             const data = docSnap.data();
             if (data.senderId !== currentUser.uid && !data.seen) {
                 batch.update(docSnap.ref, { seen: true });
                 hasUpdates = true;
             }
-            // 2. Track the last message sent by ME that is SEEN
             if (data.senderId === currentUser.uid && data.seen) {
                 lastSeenMessageId = docSnap.id;
             }
         });
 
-        if (hasUpdates) { try { await batch.commit(); } catch (e) { console.error(e); } }
+        if (hasUpdates) { try { await batch.commit(); } catch (e) {} }
 
-        // --- RENDER ---
+        // RENDER
         snapshot.forEach(doc => {
             const data = doc.data();
             const isMe = data.senderId === currentUser.uid;
@@ -336,19 +390,21 @@ function loadMessages() {
 
             if (data.type === "audio") {
                 const uId = doc.id;
+                // UPDATED AUDIO HTML STRUCTURE
                 contentHtml = `
                     <div class="audio-msg-container" id="container-${uId}">
-                        <audio id="audio-${uId}" src="${data.content}" onended="resetAudio('${uId}')"></audio>
+                        <audio id="audio-${uId}" src="${data.content}" onended="resetAudio('${uId}')" onloadedmetadata="setAudioDuration('${uId}')" ontimeupdate="updateAudioProgress('${uId}')"></audio>
                         <div class="play-btn-circle" onclick="toggleAudio('${uId}')">
                             <ion-icon id="icon-play-${uId}" name="play" class="ml-0.5 text-lg"></ion-icon>
                             <ion-icon id="icon-pause-${uId}" name="pause" class="hidden text-lg"></ion-icon>
                         </div>
-                        <div class="waveform-box">
-                            <div class="wave-bar"></div><div class="wave-bar"></div><div class="wave-bar"></div>
-                            <div class="wave-bar"></div><div class="wave-bar"></div><div class="wave-bar"></div>
-                            <div class="wave-bar"></div><div class="wave-bar"></div><div class="wave-bar"></div>
+                        <div class="waveform-box" id="waveform-${uId}">
+                            <div class="wave-bar"></div><div class="wave-bar"></div><div class="wave-bar"></div><div class="wave-bar"></div>
+                            <div class="wave-bar"></div><div class="wave-bar"></div><div class="wave-bar"></div><div class="wave-bar"></div>
+                            <div class="wave-bar"></div><div class="wave-bar"></div><div class="wave-bar"></div><div class="wave-bar"></div>
+                            <div class="wave-bar"></div><div class="wave-bar"></div><div class="wave-bar"></div><div class="wave-bar"></div>
                         </div>
-                        <span class="text-[9px] text-gray-400">Voice</span>
+                        <span id="duration-${uId}" class="audio-duration">...</span>
                     </div>`;
             } else {
                 contentHtml = `<p class="text-[15px] leading-snug">${data.content}</p>`;
@@ -365,13 +421,12 @@ function loadMessages() {
             
             if (isMe) attachLongPress(bubbleContent, doc.id);
 
-            // RENDER "SEEN" LABEL if this is the last seen message
             if (isMe && doc.id === lastSeenMessageId) {
                 const wrapper = document.createElement("div");
                 wrapper.className = "flex flex-col items-end";
                 wrapper.appendChild(bubbleContent);
                 const seenLabel = document.createElement('p');
-                seenLabel.className = "text-[10px] text-gray-400 text-right mt-1 mr-1";
+                seenLabel.className = "text-[10px] text-gray-500 text-right mt-1 mr-1 font-medium";
                 seenLabel.innerText = "Seen";
                 wrapper.appendChild(seenLabel);
                 div.appendChild(wrapper);
@@ -391,7 +446,6 @@ getEl('send-btn').addEventListener('click', async () => {
     const text = input.value.trim();
     if (!text || !selectedChatUser) return;
     try {
-        // Send with seen: false
         await addDoc(collection(db, "chats", getChatID(), "messages"), { content: text, senderId: currentUser.uid, createdAt: serverTimestamp(), type: "text", seen: false });
         await updateDoc(doc(db, "users", selectedChatUser.uid), { [`unread.${currentUser.uid}`]: increment(1) });
         input.value = "";
@@ -399,7 +453,6 @@ getEl('send-btn').addEventListener('click', async () => {
     } catch (e) { alert("Send failed"); }
 });
 
-// --- 8. RECORDING ---
 const micBtn = getEl('mic-btn');
 const lockTooltip = getEl('lock-tooltip');
 const lockedUI = getEl('locked-ui');
@@ -446,7 +499,6 @@ const stopAndSend = async () => {
             const base64 = reader.result;
             if(base64.length > 800000) return alert("Audio too long!");
             try {
-                // Send with seen: false
                 await addDoc(collection(db, "chats", getChatID(), "messages"), { content: base64, senderId: currentUser.uid, createdAt: serverTimestamp(), type: "audio", seen: false });
                 await updateDoc(doc(db, "users", selectedChatUser.uid), { [`unread.${currentUser.uid}`]: increment(1) });
             } catch(e) { alert("Send failed"); }

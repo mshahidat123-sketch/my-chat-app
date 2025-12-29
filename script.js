@@ -1,584 +1,504 @@
-import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js";
-import { getFirestore, collection, addDoc, setDoc, getDocs, doc, query, where, orderBy, onSnapshot, serverTimestamp, updateDoc, arrayUnion, arrayRemove, increment, deleteField, getDoc, deleteDoc, writeBatch } 
-from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
+/* script.js */
 
-const firebaseConfig = {
-    apiKey: "AIzaSyAo_QQ_3i_GmQsyi3tTUWwmJK09z_Y3sNM",
-    authDomain: "chatapp-e007a.firebaseapp.com",
-    projectId: "chatapp-e007a",
-    storageBucket: "chatapp-e007a.firebasestorage.app",
-    messagingSenderId: "853709166914",
-    appId: "1:853709166914:web:21f0bb1b8e03a796b010db"
-};
-
-const app = initializeApp(firebaseConfig);
-const db = getFirestore(app);
-
-// --- VARIABLES ---
-let currentUser = null;
-let selectedChatUser = null;
-let unsubscribeMessages = null;
-let friendListeners = []; 
-let mediaRecorder = null;
-let audioChunks = [];
-let selectedAvatarBase64 = null;
-let recordingTimerInterval = null;
-let pressTimer = null; 
-let longPressTimer = null;
-let messageToDeleteId = null;
-
-const getEl = (id) => document.getElementById(id);
-
-// --- 1. CRITICAL FIX: PRESENCE SYSTEM FUNCTION DEFINED FIRST ---
-function setupPresenceSystem() {
-    setInterval(() => {
-        if (currentUser) {
-            updateDoc(doc(db, "users", currentUser.uid), { isOnline: true, lastSeen: serverTimestamp() });
-        }
-    }, 30000);
-
-    window.addEventListener('beforeunload', () => {
-        if (currentUser) updateDoc(doc(db, "users", currentUser.uid), { isOnline: false });
-    });
-}
-
-// --- 2. GLOBAL HELPERS ---
-function formatTime(seconds) {
-    if(isNaN(seconds) || seconds === Infinity) return "0:00";
-    const m = Math.floor(seconds / 60);
-    const s = Math.floor(seconds % 60);
-    return `${m}:${s.toString().padStart(2, '0')}`;
-}
-
-window.setAudioDuration = (id) => {
-    const audio = document.getElementById(`audio-${id}`);
-    const durationEl = document.getElementById(`duration-${id}`);
-    if (audio && durationEl) durationEl.innerText = formatTime(audio.duration);
-};
-
-window.updateAudioProgress = (id) => {
-    const audio = document.getElementById(`audio-${id}`);
-    const playhead = document.getElementById(`playhead-${id}`);
-    const waveform = document.getElementById(`waveform-${id}`);
-    const durationEl = document.getElementById(`duration-${id}`);
-    
-    if (!audio) return;
-    
-    // Update Timer (Count Down style like Instagram)
-    const timeLeft = audio.duration - audio.currentTime;
-    if(durationEl) durationEl.innerText = formatTime(timeLeft);
-
-    // Update Line Position
-    const percent = (audio.currentTime / audio.duration) * 100;
-    if(playhead) {
-        playhead.style.display = 'block';
-        playhead.style.left = `${percent}%`;
+// --- Helper to generate random waveform bars ---
+function generateWaveformHtml(numBars = 28) {
+    let html = '';
+    for (let i = 0; i < numBars; i++) {
+        // Generate a random height between 30% and 100%
+        const height = Math.floor(Math.random() * (100 - 30 + 1) + 30);
+        html += `<div class="waveform-bar" style="height: ${height}%;"></div>`;
     }
+    return html;
+}
 
-    // Color bars
-    if(waveform) {
-        const bars = waveform.querySelectorAll('.wave-bar');
-        const activeCount = Math.floor((percent/100) * bars.length);
-        bars.forEach((bar, idx) => {
-            if(idx < activeCount) bar.classList.add('played');
-            else bar.classList.remove('played');
-        });
+// --- State Management ---
+const state = {
+    currentUser: { username: '', avatar: '' },
+    activeChatId: null,
+    // Mock Data
+    friends: [
+        { id: 1, name: 'Sarah Jenkins', avatar: 'https://i.pravatar.cc/150?img=1', status: 'Online', lastMsg: 'See you tomorrow!', time: '10:30 AM', unread: 2 },
+        { id: 2, name: 'David Miller', avatar: 'https://i.pravatar.cc/150?img=11', status: 'Offline', lastMsg: '🎤 Voice Message (0:07)', time: 'Yesterday', unread: 0 },
+        { id: 3, name: 'Jessica Wong', avatar: 'https://i.pravatar.cc/150?img=5', status: 'Online', lastMsg: 'Haha, that is funny.', time: 'Mon', unread: 0 },
+    ],
+    friendRequests: [
+        { id: 4, name: 'Mike Ross', avatar: 'https://i.pravatar.cc/150?img=3' }
+    ],
+    messages: {
+        1: [
+            { id: 1, text: "Hey! How are you?", type: 'received', time: '10:00 AM' },
+            { id: 2, text: "I'm doing good, just working on the new project.", type: 'sent', time: '10:05 AM' },
+            { id: 3, text: "That sounds cool. See you tomorrow!", type: 'received', time: '10:30 AM' },
+            // MOCK AUDIO MESSAGE
+            { id: 4, type: 'audio', durationStr: '0:05', sentBy: 'received', time: '10:31 AM' },
+            { id: 5, type: 'audio', durationStr: '0:12', sentBy: 'sent', time: '10:32 AM' }
+        ],
+        2: [
+             { id: 201, type: 'audio', durationStr: '0:07', sentBy: 'received', time: 'Yesterday' }
+        ],
+        3: []
     }
 };
 
-window.toggleAudio = (id) => {
-    const audio = document.getElementById(`audio-${id}`);
-    const playIcon = document.getElementById(`icon-play-${id}`);
-    const pauseIcon = document.getElementById(`icon-pause-${id}`);
-
-    document.querySelectorAll('audio').forEach(a => {
-        if(a.id !== `audio-${id}`) {
-            a.pause(); a.currentTime = 0;
-            window.resetAudio(a.id.replace('audio-', ''));
-        }
-    });
-
-    if (audio.paused) {
-        audio.play();
-        playIcon.classList.add('hidden');
-        pauseIcon.classList.remove('hidden');
-    } else {
-        audio.pause();
-        playIcon.classList.remove('hidden');
-        pauseIcon.classList.add('hidden');
+// --- DOM Elements ---
+const dom = {
+    screens: {
+        splash: document.getElementById('splash-screen'),
+        login: document.getElementById('login-screen'),
+        app: document.getElementById('app-screen')
+    },
+    login: {
+        input: document.getElementById('login-username'),
+        btn: document.getElementById('login-btn'),
+        avatarInput: document.getElementById('avatar-input'),
+        avatarPreview: document.getElementById('avatar-preview-img')
+    },
+    nav: {
+        sidebar: document.getElementById('sidebar'),
+        chatArea: document.getElementById('chat-area'),
+        backBtn: document.getElementById('back-btn'),
+        myAvatar: document.getElementById('my-avatar'),
+        logoutBtn: document.getElementById('logout-btn')
+    },
+    chat: {
+        headerName: document.getElementById('chat-header-name'),
+        headerImg: document.getElementById('chat-header-img'),
+        headerStatus: document.getElementById('chat-header-status'),
+        list: document.getElementById('friend-list'),
+        msgList: document.getElementById('msg-list'),
+        input: document.getElementById('msg-input'),
+        sendBtn: document.getElementById('send-btn'),
+        micBtn: document.getElementById('mic-btn')
+    },
+    audio: {
+        lockedUi: document.getElementById('locked-ui'),
+        timer: document.getElementById('lock-timer'),
+        cancel: document.getElementById('cancel-lock-btn'),
+        send: document.getElementById('send-lock-btn')
+    },
+    requests: {
+        btn: document.getElementById('requests-btn'),
+        badge: document.getElementById('requests-badge'),
+        modal: document.getElementById('requests-modal'),
+        close: document.getElementById('close-requests-btn'),
+        list: document.getElementById('requests-list-container')
+    },
+    msgOptions: {
+        modal: document.getElementById('msg-options-modal'),
+        closeOverlay: document.getElementById('close-msg-options'),
+        unsendBtn: document.getElementById('unsend-msg-btn')
     }
 };
 
-window.resetAudio = (id) => {
-    const playIcon = document.getElementById(`icon-play-${id}`);
-    const pauseIcon = document.getElementById(`icon-pause-${id}`);
-    const playhead = document.getElementById(`playhead-${id}`);
-    const waveform = document.getElementById(`waveform-${id}`);
-    const durationEl = document.getElementById(`duration-${id}`);
-    const audio = document.getElementById(`audio-${id}`);
+// --- Initialization ---
 
-    if(playIcon) playIcon.classList.remove('hidden');
-    if(pauseIcon) pauseIcon.classList.add('hidden');
-    if(playhead) { playhead.style.display = 'none'; playhead.style.left = '0%'; }
-    if(waveform) waveform.querySelectorAll('.wave-bar').forEach(b => b.classList.remove('played'));
-    if(audio && durationEl) durationEl.innerText = formatTime(audio.duration);
-};
-
-window.respondRequest = async function(targetUid, isAccepted) {
-    if (!currentUser) return;
-    try {
-        const myRef = doc(db, "users", currentUser.uid);
-        const theirRef = doc(db, "users", targetUid);
-        await updateDoc(myRef, { friendRequests: arrayRemove(targetUid) });
-
-        if (isAccepted) {
-            await updateDoc(myRef, { friends: arrayUnion(targetUid) });
-            await updateDoc(theirRef, { friends: arrayUnion(currentUser.uid) });
-            alert("Friend added!");
-        }
-        if (!currentUser.friendRequests || currentUser.friendRequests.length <= 1) {
-            getEl('requests-modal').classList.add('hidden');
-        }
-    } catch(e) { console.error(e); }
-};
-
-// --- 3. HEADER ACTIONS ---
-getEl('add-friend-btn').addEventListener('click', async () => {
-    const input = prompt("Enter username to add:");
-    if (!input) return;
-    try {
-        const q = query(collection(db, "users"), where("username", "==", input.toLowerCase().trim()));
-        const snapshot = await getDocs(q);
-        if (snapshot.empty) return alert("User not found");
-        let friendID = snapshot.docs[0].data().uid;
-        if (friendID === currentUser.uid) return alert("Cannot add yourself");
-        await updateDoc(doc(db, "users", friendID), { friendRequests: arrayUnion(currentUser.uid) });
-        alert("Friend request sent!");
-    } catch(e) { alert("Error: " + e.message); }
-});
-
-getEl('logout-btn').addEventListener('click', async () => {
-    if (currentUser) await updateDoc(doc(db, "users", currentUser.uid), { isOnline: false });
-    location.reload();
-});
-
-// --- 4. UNSEND LOGIC ---
-const msgOptionsModal = getEl('msg-options-modal');
-const unsendBtn = getEl('unsend-msg-btn');
-const closeMsgOptions = getEl('close-msg-options');
-
-function attachLongPress(element, msgId) {
-    element.addEventListener('touchstart', (e) => {
-        longPressTimer = setTimeout(() => openMessageOptions(msgId), 800);
-    });
-    element.addEventListener('touchend', () => clearTimeout(longPressTimer));
-    element.addEventListener('touchmove', () => clearTimeout(longPressTimer));
-    element.addEventListener('mousedown', () => {
-        longPressTimer = setTimeout(() => openMessageOptions(msgId), 800);
-    });
-    element.addEventListener('mouseup', () => clearTimeout(longPressTimer));
-    element.addEventListener('mouseleave', () => clearTimeout(longPressTimer));
-}
-
-function openMessageOptions(msgId) {
-    if (navigator.vibrate) navigator.vibrate(50);
-    messageToDeleteId = msgId;
-    msgOptionsModal.classList.remove('hidden');
-}
-
-closeMsgOptions.addEventListener('click', () => {
-    msgOptionsModal.classList.add('hidden');
-    messageToDeleteId = null;
-});
-
-unsendBtn.addEventListener('click', async () => {
-    if (!messageToDeleteId || !selectedChatUser) return;
-    try {
-        const chatId = getChatID();
-        await deleteDoc(doc(db, "chats", chatId, "messages", messageToDeleteId));
-        msgOptionsModal.classList.add('hidden');
-    } catch (e) { alert("Error unsending: " + e.message); }
-});
-
-// --- 5. LOGIN & SETUP ---
-getEl('avatar-input').addEventListener('change', (e) => {
+// 1. Handle Avatar Upload Preview
+dom.login.avatarInput.addEventListener('change', function(e) {
     const file = e.target.files[0];
     if (file) {
         const reader = new FileReader();
-        reader.onload = (ev) => {
-            selectedAvatarBase64 = ev.target.result;
-            getEl('avatar-preview-img').src = selectedAvatarBase64;
-            getEl('avatar-overlay').classList.add('hidden');
-        };
+        reader.onload = function(e) {
+            dom.login.avatarPreview.src = e.target.result;
+            state.currentUser.avatar = e.target.result;
+        }
         reader.readAsDataURL(file);
     }
 });
 
-getEl('login-btn').addEventListener('click', async () => {
-    const username = getEl('login-username').value.trim().toLowerCase();
-    if (!username) return alert("Enter a username");
-    getEl('login-btn').innerText = "Entering...";
-    getEl('login-btn').disabled = true;
-
-    try {
-        const q = query(collection(db, "users"), where("username", "==", username));
-        const snapshot = await getDocs(q);
-
-        if (!snapshot.empty) {
-            snapshot.forEach(doc => currentUser = doc.data());
-            if (selectedAvatarBase64) await updateDoc(doc(db, "users", currentUser.uid), { photoURL: selectedAvatarBase64 });
-        } else {
-            const newUid = "u_" + Date.now();
-            const defaultAvatar = "data:image/svg+xml;charset=UTF-8,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3e%3ccircle cx='12' cy='12' r='12' fill='%23BDBDBD'/%3e%3cpath fill='%23FFFFFF' d='M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z'/%3e%3c/svg%3e";
-            const newUser = {
-                uid: newUid, username: username, displayName: username,
-                photoURL: selectedAvatarBase64 || defaultAvatar,
-                friends: [], friendRequests: [], unread: {}, isOnline: true, createdAt: serverTimestamp()
-            };
-            await setDoc(doc(db, "users", newUid), newUser);
-            currentUser = newUser;
-        }
-        await updateDoc(doc(db, "users", currentUser.uid), { isOnline: true, lastSeen: serverTimestamp() });
-
-        getEl('login-screen').classList.add('hidden');
-        getEl('app-screen').classList.remove('hidden');
-        getEl('my-avatar').src = currentUser.photoURL;
-        loadData(); 
-        setupPresenceSystem();
-    } catch (err) {
-        alert("Login Error: " + err.message);
-        getEl('login-btn').disabled = false;
+// 2. Login Logic
+dom.login.btn.addEventListener('click', () => {
+    const username = dom.login.input.value.trim();
+    if (!username) {
+        alert("Please enter a username");
+        return;
     }
+    
+    // Set user state
+    state.currentUser.username = username;
+    if(!state.currentUser.avatar) state.currentUser.avatar = dom.login.avatarPreview.src;
+
+    // Transition UI
+    dom.login.btn.innerHTML = `<ion-icon name="sync" class="animate-spin text-xl"></ion-icon>`;
+    
+    setTimeout(() => {
+        dom.screens.login.classList.add('fade-out');
+        dom.screens.login.style.display = 'none';
+        dom.screens.app.classList.remove('hidden');
+        dom.screens.app.classList.add('animate-fade-in');
+        
+        // Init App Data
+        dom.nav.myAvatar.src = state.currentUser.avatar;
+        renderFriendList();
+        updateRequestBadge();
+    }, 1000);
 });
 
-// --- 6. DATA LOADING ---
-function loadData() {
-    onSnapshot(doc(db, "users", currentUser.uid), (docSnap) => {
-        const data = docSnap.data();
-        if(!data) return;
-        currentUser = data; 
-        const reqBtn = getEl('requests-btn');
-        const reqBadge = getEl('requests-badge');
-        if (data.friendRequests && data.friendRequests.length > 0) {
-            reqBtn.classList.remove('hidden');
-            reqBadge.classList.remove('hidden');
-            if (!getEl('requests-modal').classList.contains('hidden')) renderRequestsModal(data.friendRequests);
-        } else {
-            reqBtn.classList.add('hidden');
-        }
-        renderFriendsList(data.friends || [], data.unread || {});
+// 3. Friend List Rendering
+function renderFriendList() {
+    dom.chat.list.innerHTML = '';
+    state.friends.forEach(friend => {
+        const isActive = state.activeChatId === friend.id;
+        const div = document.createElement('div');
+        div.className = `p-3 flex items-center gap-3 rounded-xl cursor-pointer transition ${isActive ? 'bg-[#262626]' : 'hover:bg-[#1a1a1a]'}`;
+        div.onclick = () => openChat(friend);
+        
+        div.innerHTML = `
+            <div class="relative">
+                <img src="${friend.avatar}" class="w-12 h-12 rounded-full object-cover">
+                ${friend.status === 'Online' ? '<div class="absolute bottom-0 right-0 w-3 h-3 bg-green-500 rounded-full border-2 border-black"></div>' : ''}
+            </div>
+            <div class="flex-1 min-w-0">
+                <div class="flex justify-between items-baseline mb-0.5">
+                    <h3 class="font-bold text-white truncate">${friend.name}</h3>
+                    <span class="text-xs text-gray-500">${friend.time}</span>
+                </div>
+                <div class="flex justify-between items-center">
+                    <p class="text-sm text-gray-400 truncate w-4/5">${friend.lastMsg}</p>
+                    ${friend.unread > 0 ? `<span class="bg-blue-600 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full min-w-[18px] text-center">${friend.unread}</span>` : ''}
+                </div>
+            </div>
+        `;
+        dom.chat.list.appendChild(div);
     });
 }
 
-function renderFriendsList(friendsList, unreadMap) {
-    const listEl = getEl('friend-list');
-    listEl.innerHTML = "";
-    friendListeners.forEach(unsub => unsub());
-    friendListeners = [];
+// 4. Open Chat Logic
+function openChat(friend) {
+    state.activeChatId = friend.id;
+    
+    // Reset Unread
+    friend.unread = 0;
+    renderFriendList();
 
-    if (!friendsList.length) {
-        listEl.innerHTML = `<div class="text-center text-gray-500 mt-10 text-xs">No chats yet.</div>`;
+    // UI Updates
+    dom.chat.headerName.innerText = friend.name;
+    dom.chat.headerImg.src = friend.avatar;
+    dom.chat.headerStatus.innerHTML = friend.status === 'Online' 
+        ? `<span class="w-2 h-2 rounded-full bg-green-500 animate-pulse"></span> Online`
+        : `<span class="text-gray-500">Offline</span>`;
+
+    // Mobile View Toggle
+    if (window.innerWidth < 768) {
+        dom.nav.sidebar.classList.add('hidden');
+        dom.nav.chatArea.classList.remove('hidden');
+    }
+
+    renderMessages(friend.id);
+}
+
+// 5. Render Messages (UPDATED)
+function renderMessages(chatId) {
+    dom.chat.msgList.innerHTML = '';
+    const msgs = state.messages[chatId] || [];
+    
+    msgs.forEach(msg => {
+        appendMessageToDom(msg);
+    });
+    
+    scrollToBottom();
+}
+
+function appendMessageToDom(msg) {
+    const div = document.createElement('div');
+    // Determine sender type (sent/received)
+    const sentBy = msg.sentBy || msg.type; // Fallback for older text messages
+    div.className = `flex flex-col mb-1 ${sentBy === 'sent' ? 'items-end' : 'items-start'}`;
+    div.id = `msg-${msg.id}`; // Add an ID for easy selection
+
+    // Add long press/right click event for options
+    div.addEventListener('contextmenu', (e) => {
+        e.preventDefault();
+        openMessageOptions(msg.id);
+    });
+
+    let bubbleHtml = '';
+
+    if (msg.type === 'audio') {
+        // --- NEW: Voice Message HTML Structure ---
+        bubbleHtml = `
+            <div class="msg-bubble voice-msg-bubble ${sentBy === 'sent' ? 'msg-sent' : 'msg-received'}">
+                <button class="play-pause-btn" onclick="playVoiceMessage(${msg.id}, '${msg.durationStr}')">
+                    <ion-icon name="play"></ion-icon>
+                </button>
+                <div class="waveform-container" id="waveform-${msg.id}">
+                    ${generateWaveformHtml()} </div>
+                <span class="duration" id="duration-${msg.id}">${msg.durationStr}</span>
+            </div>
+        `;
+    } else {
+        // --- Standard Text Message HTML ---
+        bubbleHtml = `
+            <div class="msg-bubble ${sentBy === 'sent' ? 'msg-sent' : 'msg-received'}">
+                ${msg.text}
+            </div>
+        `;
+    }
+
+    div.innerHTML = `
+        ${bubbleHtml}
+        <span class="text-[10px] text-gray-600 mt-1 px-1">${msg.time}</span>
+    `;
+    dom.chat.msgList.appendChild(div);
+}
+
+// --- NEW: Voice Message Playback Logic (Simulation) ---
+window.playVoiceMessage = (msgId, durationStr) => {
+    const msgElement = document.getElementById(`msg-${msgId}`);
+    if (!msgElement) return;
+    
+    const playBtn = msgElement.querySelector('.play-pause-btn');
+    const icon = playBtn.querySelector('ion-icon');
+    const waveformContainer = document.getElementById(`waveform-${msgId}`);
+    const bars = waveformContainer.querySelectorAll('.waveform-bar');
+
+    const isPlaying = icon.getAttribute('name') === 'pause';
+
+    if (isPlaying) {
+        // Stop logic
+        icon.setAttribute('name', 'play');
+        bars.forEach(bar => bar.classList.remove('playing'));
+        // In a real app, you'd pause the audio object here.
+    } else {
+        // Play logic
+        icon.setAttribute('name', 'pause');
+
+        // Calculate animation delay per bar based on duration
+        const [mins, secs] = durationStr.split(':').map(Number);
+        const totalSeconds = mins * 60 + secs;
+        const delayPerBar = (totalSeconds * 1000) / bars.length;
+
+        bars.forEach((bar, index) => {
+            setTimeout(() => {
+                // Only add 'playing' if still in play mode
+                if (icon.getAttribute('name') === 'pause') {
+                    bar.classList.add('playing');
+                }
+            }, index * delayPerBar);
+        });
+
+        // Auto-reset after playback finishes
+        setTimeout(() => {
+            if (icon.getAttribute('name') === 'pause') {
+                icon.setAttribute('name', 'play');
+                bars.forEach(bar => bar.classList.remove('playing')); // Reset waveform
+            }
+        }, totalSeconds * 1000);
+    }
+};
+
+function scrollToBottom() {
+    dom.chat.msgList.scrollTop = dom.chat.msgList.scrollHeight;
+}
+
+// 6. Send Message Logic
+dom.chat.sendBtn.addEventListener('click', sendMessage);
+dom.chat.input.addEventListener('keypress', (e) => {
+    if(e.key === 'Enter') sendMessage();
+});
+
+function sendMessage() {
+    const text = dom.chat.input.value.trim();
+    if (!text || !state.activeChatId) return;
+
+    const newMsg = {
+        id: Date.now(),
+        text: text,
+        type: 'text', // Explicitly set type
+        sentBy: 'sent',
+        time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+    };
+
+    // Update state
+    state.messages[state.activeChatId].push(newMsg);
+    
+    // Update UI
+    appendMessageToDom(newMsg);
+    dom.chat.input.value = '';
+    dom.chat.sendBtn.classList.add('hidden');
+    scrollToBottom();
+
+    // Update Sidebar Preview
+    const friend = state.friends.find(f => f.id === state.activeChatId);
+    friend.lastMsg = "You: " + text;
+    friend.time = "Just now";
+    renderFriendList();
+
+    // Simulate Reply
+    setTimeout(() => {
+        receiveMockReply(state.activeChatId);
+    }, 2000);
+}
+
+function receiveMockReply(chatId) {
+    const replies = ["That's interesting!", "Okay, got it.", "Can we talk later?", "LOL 😂", "Sure thing."];
+    const randomReply = replies[Math.floor(Math.random() * replies.length)];
+    
+    const replyMsg = {
+        id: Date.now(),
+        text: randomReply,
+        type: 'text',
+        sentBy: 'received',
+        time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+    };
+
+    state.messages[chatId].push(replyMsg);
+    
+    if (state.activeChatId === chatId) {
+        appendMessageToDom(replyMsg);
+        scrollToBottom();
+    }
+    
+    // Update Sidebar
+    const friend = state.friends.find(f => f.id === chatId);
+    friend.lastMsg = randomReply;
+    friend.time = "Just now";
+    renderFriendList();
+}
+
+// 7. Audio Recording Mock UI (UPDATED)
+let recordInterval;
+let recordSeconds = 0;
+
+dom.chat.micBtn.addEventListener('click', () => {
+    // Show Locked UI
+    dom.audio.lockedUi.classList.remove('hidden');
+    dom.chat.micBtn.classList.add('hidden'); // Hide original mic
+    
+    // Start Timer
+    recordSeconds = 0;
+    dom.audio.timer.innerText = "0:00";
+    recordInterval = setInterval(() => {
+        recordSeconds++;
+        const mins = Math.floor(recordSeconds / 60);
+        const secs = recordSeconds % 60;
+        dom.audio.timer.innerText = `${mins}:${secs < 10 ? '0' : ''}${secs}`;
+    }, 1000);
+});
+
+dom.audio.cancel.addEventListener('click', stopRecording);
+dom.audio.send.addEventListener('click', () => {
+    stopRecording();
+    if (recordSeconds < 1) return; // Don't send empty
+
+    const durationStr = (recordSeconds < 10 ? '0' : '') + recordSeconds;
+    const audioMsg = {
+        id: Date.now(),
+        type: 'audio', // Set type to audio
+        durationStr: "0:" + durationStr,
+        sentBy: 'sent',
+        time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+    };
+    
+    state.messages[state.activeChatId].push(audioMsg);
+    appendMessageToDom(audioMsg);
+    scrollToBottom();
+
+    // Update sidebar
+    const friend = state.friends.find(f => f.id === state.activeChatId);
+    friend.lastMsg = "🎤 Voice Message";
+    friend.time = "Just now";
+    renderFriendList();
+});
+
+function stopRecording() {
+    clearInterval(recordInterval);
+    dom.audio.lockedUi.classList.add('hidden');
+    dom.chat.micBtn.classList.remove('hidden');
+}
+
+// 8. Navigation (Mobile)
+dom.nav.backBtn.addEventListener('click', () => {
+    dom.nav.chatArea.classList.add('hidden');
+    dom.nav.sidebar.classList.remove('hidden');
+    state.activeChatId = null;
+    renderFriendList(); // remove active highlight
+});
+
+// 9. Requests Modal
+function updateRequestBadge() {
+    if (state.friendRequests.length > 0) {
+        dom.requests.badge.classList.remove('hidden');
+        dom.requests.btn.classList.remove('hidden');
+    }
+}
+
+dom.requests.btn.addEventListener('click', () => {
+    dom.requests.modal.classList.remove('hidden');
+    renderRequests();
+});
+
+dom.requests.close.addEventListener('click', () => {
+    dom.requests.modal.classList.add('hidden');
+});
+
+function renderRequests() {
+    dom.requests.list.innerHTML = '';
+    if(state.friendRequests.length === 0) {
+        dom.requests.list.innerHTML = '<p class="text-gray-500 text-center">No pending requests</p>';
         return;
     }
 
-    friendsList.forEach(friendUid => {
-        const unsub = onSnapshot(doc(db, "users", friendUid), (fSnap) => {
-            if (!fSnap.exists()) return;
-            const fData = fSnap.data();
-            let isOnline = false;
-            if (fData.lastSeen) {
-                const diff = Date.now() - (fData.lastSeen.toMillis ? fData.lastSeen.toMillis() : 0);
-                isOnline = diff < 65000;
-            }
-            const unreadCount = unreadMap[fData.uid] || 0;
-            const unreadBadge = unreadCount > 0 ? `<div class="bg-red-500 text-white text-[10px] font-bold h-5 min-w-[1.25rem] px-1 flex items-center justify-center rounded-full shadow-lg shadow-red-900">${unreadCount}</div>` : '';
-            const isActive = selectedChatUser && selectedChatUser.uid === fData.uid;
-            const bgClass = isActive ? "bg-gray-800 border-gray-700" : "hover:bg-gray-900 border-transparent hover:border-gray-800";
-
-            let card = document.getElementById(`friend-${fData.uid}`);
-            const html = `
-                <div class="relative">
-                    <img src="${fData.photoURL}" class="w-12 h-12 rounded-full border border-gray-700 object-cover bg-gray-800">
-                    <div class="absolute bottom-0 right-0 w-3.5 h-3.5 ${isOnline ? "bg-green-500" : "bg-gray-600"} rounded-full border-2 border-black"></div>
-                </div>
-                <div class="flex-1 min-w-0">
-                    <div class="flex justify-between items-center">
-                        <p class="font-bold text-gray-200 capitalize text-sm truncate">${fData.displayName}</p>
-                        ${unreadBadge}
-                    </div>
-                    <p class="text-[10px] ${isOnline ? 'text-green-500' : 'text-gray-500'} uppercase tracking-wider font-semibold">${isOnline ? "Online" : "Offline"}</p>
-                </div>`;
-
-            if (card) { card.innerHTML = html; card.className = `p-3 rounded-xl cursor-pointer flex items-center gap-3 transition border ${bgClass}`; } 
-            else {
-                card = document.createElement("div");
-                card.id = `friend-${fData.uid}`;
-                card.className = `p-3 rounded-xl cursor-pointer flex items-center gap-3 transition border ${bgClass}`;
-                card.innerHTML = html;
-                card.onclick = () => openChat(fData);
-                listEl.appendChild(card);
-            }
-            if (isActive && getEl('chat-header-status')) {
-                getEl('chat-header-status').innerText = isOnline ? "Online" : "Offline";
-                getEl('chat-header-status').className = isOnline ? "text-xs text-green-500 font-bold" : "text-xs text-gray-500";
-            }
-        });
-        friendListeners.push(unsub);
+    state.friendRequests.forEach(req => {
+        const div = document.createElement('div');
+        div.className = "flex items-center justify-between bg-gray-900 p-3 rounded-xl";
+        div.innerHTML = `
+            <div class="flex items-center gap-3">
+                <img src="${req.avatar}" class="w-10 h-10 rounded-full">
+                <span class="font-bold text-white">${req.name}</span>
+            </div>
+            <div class="flex gap-2">
+                <button onclick="acceptRequest(${req.id})" class="bg-blue-600 text-white p-2 rounded-full hover:bg-blue-500"><ion-icon name="checkmark"></ion-icon></button>
+                <button onclick="rejectRequest(${req.id})" class="bg-gray-700 text-red-500 p-2 rounded-full hover:bg-gray-600"><ion-icon name="close"></ion-icon></button>
+            </div>
+        `;
+        dom.requests.list.appendChild(div);
     });
 }
 
-// --- 7. CHAT LOGIC ---
-window.openChat = async (friend) => {
-    selectedChatUser = friend;
-    getEl('sidebar').classList.add('hidden');
-    getEl('sidebar').classList.remove('flex');
-    getEl('chat-area').classList.remove('hidden');
-    getEl('chat-area').classList.add('flex');
-    getEl('chat-header-name').innerText = friend.displayName;
-    getEl('chat-header-img').src = friend.photoURL;
-
-    if (currentUser.unread && currentUser.unread[friend.uid]) {
-        await updateDoc(doc(db, "users", currentUser.uid), { [`unread.${friend.uid}`]: deleteField() });
-    }
-    loadMessages();
-    renderFriendsList(currentUser.friends, currentUser.unread || {}); 
-};
-
-getEl('back-btn').addEventListener('click', () => {
-    selectedChatUser = null;
-    if (unsubscribeMessages) unsubscribeMessages();
-    getEl('sidebar').classList.remove('hidden');
-    getEl('sidebar').classList.add('flex');
-    getEl('chat-area').classList.add('hidden');
-    getEl('chat-area').classList.remove('flex');
-});
-
-function getChatID() { return [currentUser.uid, selectedChatUser.uid].sort().join("_"); }
-
-function loadMessages() {
-    if (unsubscribeMessages) unsubscribeMessages();
-    const q = query(collection(db, "chats", getChatID(), "messages"), orderBy("createdAt", "asc"));
-    
-    unsubscribeMessages = onSnapshot(q, async (snapshot) => {
-        const list = getEl('msg-list');
-        list.innerHTML = "";
-        if (snapshot.empty) { list.innerHTML = `<div class="text-center text-gray-600 mt-10 text-xs">No messages yet.</div>`; return; }
-
-        // MARK SEEN
-        const batch = writeBatch(db);
-        let hasUpdates = false;
-        let lastSeenMessageId = null;
-
-        snapshot.docs.forEach(docSnap => {
-            const data = docSnap.data();
-            if (data.senderId !== currentUser.uid && !data.seen) {
-                batch.update(docSnap.ref, { seen: true });
-                hasUpdates = true;
-            }
-            if (data.senderId === currentUser.uid && data.seen) {
-                lastSeenMessageId = docSnap.id;
-            }
-        });
-
-        if (hasUpdates) { try { await batch.commit(); } catch (e) {} }
-
-        // RENDER
-        snapshot.forEach(doc => {
-            const data = doc.data();
-            const isMe = data.senderId === currentUser.uid;
-            const avatarSrc = isMe ? currentUser.photoURL : selectedChatUser.photoURL;
-            let contentHtml = "";
-
-            if (data.type === "audio") {
-                const uId = doc.id;
-                contentHtml = `
-                    <div class="audio-msg-container" id="container-${uId}">
-                        <audio id="audio-${uId}" src="${data.content}" onended="resetAudio('${uId}')" onloadedmetadata="setAudioDuration('${uId}')" ontimeupdate="updateAudioProgress('${uId}')"></audio>
-                        <div class="play-btn-circle" onclick="toggleAudio('${uId}')">
-                            <ion-icon id="icon-play-${uId}" name="play" class="ml-0.5 text-lg"></ion-icon>
-                            <ion-icon id="icon-pause-${uId}" name="pause" class="hidden text-lg"></ion-icon>
-                        </div>
-                        <div class="waveform-box" id="waveform-${uId}">
-                            <div id="playhead-${uId}" class="playhead-line"></div>
-                            
-                            <div class="wave-bar"></div><div class="wave-bar"></div><div class="wave-bar"></div><div class="wave-bar"></div>
-                            <div class="wave-bar"></div><div class="wave-bar"></div><div class="wave-bar"></div><div class="wave-bar"></div>
-                            <div class="wave-bar"></div><div class="wave-bar"></div><div class="wave-bar"></div><div class="wave-bar"></div>
-                            <div class="wave-bar"></div><div class="wave-bar"></div><div class="wave-bar"></div><div class="wave-bar"></div>
-                        </div>
-                        <span id="duration-${uId}" class="audio-duration">...</span>
-                    </div>`;
-            } else {
-                contentHtml = `<p class="text-[15px] leading-snug">${data.content}</p>`;
-            }
-
-            const div = document.createElement("div");
-            div.className = `flex w-full ${isMe ? 'justify-end' : 'justify-start'} mb-2 items-end gap-2`;
-            const avatarHtml = !isMe ? `<img src="${avatarSrc}" class="w-7 h-7 rounded-full mb-1 object-cover border border-gray-800">` : ``;
-            const bubbleColor = isMe ? 'bg-[#374151] text-white rounded-[22px] rounded-br-sm' : 'bg-[#262626] text-white rounded-[22px] rounded-bl-sm';
-            
-            const bubbleContent = document.createElement("div");
-            bubbleContent.className = `max-w-[75%] px-4 py-3 ${bubbleColor} shadow-sm relative group cursor-pointer active:scale-95 transition-transform select-none`;
-            bubbleContent.innerHTML = contentHtml;
-            
-            if (isMe) attachLongPress(bubbleContent, doc.id);
-
-            if (isMe && doc.id === lastSeenMessageId) {
-                const wrapper = document.createElement("div");
-                wrapper.className = "flex flex-col items-end";
-                wrapper.appendChild(bubbleContent);
-                const seenLabel = document.createElement('p');
-                seenLabel.className = "text-[10px] text-gray-500 text-right mt-1 mr-1 font-medium";
-                seenLabel.innerText = "Seen";
-                wrapper.appendChild(seenLabel);
-                div.appendChild(wrapper);
-            } else {
-                div.innerHTML = avatarHtml;
-                div.appendChild(bubbleContent);
-            }
-            list.appendChild(div);
-        });
-        setTimeout(() => list.scrollTop = list.scrollHeight, 100);
-    });
-}
-
-// --- 8. SENDING ACTIONS ---
-getEl('send-btn').addEventListener('click', async () => {
-    const input = getEl('msg-input');
-    const text = input.value.trim();
-    if (!text || !selectedChatUser) return;
-    try {
-        await addDoc(collection(db, "chats", getChatID(), "messages"), { content: text, senderId: currentUser.uid, createdAt: serverTimestamp(), type: "text", seen: false });
-        await updateDoc(doc(db, "users", selectedChatUser.uid), { [`unread.${currentUser.uid}`]: increment(1) });
-        input.value = "";
-        input.dispatchEvent(new Event('input'));
-    } catch (e) { alert("Send failed"); }
-});
-
-const micBtn = getEl('mic-btn');
-const lockTooltip = getEl('lock-tooltip');
-const lockedUI = getEl('locked-ui');
-const lockTimer = getEl('lock-timer');
-const inputBar = getEl('input-bar');
-
-let isRecording = false;
-let isLocked = false;
-let startY = 0;
-let startTime = 0;
-
-const updateTimer = () => {
-    const elapsed = Math.floor((Date.now() - startTime) / 1000);
-    const m = Math.floor(elapsed / 60);
-    const s = elapsed % 60;
-    lockTimer.innerText = `${m}:${s.toString().padStart(2, '0')}`;
-};
-
-const startRecordingProcess = async () => {
-    if (!navigator.mediaDevices) return alert("Mic blocked");
-    try {
-        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-        mediaRecorder = new MediaRecorder(stream);
-        audioChunks = [];
-        mediaRecorder.ondataavailable = e => audioChunks.push(e.data);
-        mediaRecorder.start();
-        
-        isRecording = true;
-        startTime = Date.now();
-        micBtn.classList.add('mic-active');
-        lockTooltip.classList.remove('hidden'); 
-        
-        recordingTimerInterval = setInterval(updateTimer, 1000);
-    } catch(e) { alert("Mic Error: " + e.message); }
-};
-
-const stopAndSend = async () => {
-    if (!mediaRecorder || mediaRecorder.state !== 'recording') return;
-    mediaRecorder.onstop = async () => {
-        const blob = new Blob(audioChunks, { type: 'audio/webm' });
-        const reader = new FileReader();
-        reader.readAsDataURL(blob);
-        reader.onloadend = async () => {
-            const base64 = reader.result;
-            if(base64.length > 800000) return alert("Audio too long!");
-            try {
-                await addDoc(collection(db, "chats", getChatID(), "messages"), { content: base64, senderId: currentUser.uid, createdAt: serverTimestamp(), type: "audio", seen: false });
-                await updateDoc(doc(db, "users", selectedChatUser.uid), { [`unread.${currentUser.uid}`]: increment(1) });
-            } catch(e) { alert("Send failed"); }
+// Expose these to global scope
+window.acceptRequest = (id) => {
+    const reqIndex = state.friendRequests.findIndex(r => r.id === id);
+    if (reqIndex > -1) {
+        const newFriend = {
+            ...state.friendRequests[reqIndex],
+            status: 'Online',
+            lastMsg: 'You are now friends',
+            time: 'Just now',
+            unread: 0
         };
-        mediaRecorder.stream.getTracks().forEach(t => t.stop());
-    };
-    mediaRecorder.stop();
-    resetRecordingUI();
+        state.friends.push(newFriend);
+        state.messages[newFriend.id] = []; // Init msg array
+        state.friendRequests.splice(reqIndex, 1);
+        
+        renderRequests();
+        renderFriendList();
+        
+        if(state.friendRequests.length === 0) {
+            dom.requests.badge.classList.add('hidden');
+            dom.requests.modal.classList.add('hidden');
+        }
+    }
 };
 
-const resetRecordingUI = () => {
-    isRecording = false;
-    isLocked = false;
-    clearInterval(recordingTimerInterval);
-    micBtn.classList.remove('mic-active');
-    lockTooltip.classList.add('hidden');
-    lockedUI.classList.add('hidden');
-    inputBar.classList.remove('invisible');
+window.rejectRequest = (id) => {
+    state.friendRequests = state.friendRequests.filter(r => r.id !== id);
+    renderRequests();
+    if(state.friendRequests.length === 0) {
+        dom.requests.badge.classList.add('hidden');
+    }
 };
 
-micBtn.addEventListener('touchstart', (e) => {
-    e.preventDefault();
-    startY = e.touches[0].clientY;
-    pressTimer = setTimeout(() => {
-        startRecordingProcess();
-    }, 100);
-});
-
-micBtn.addEventListener('touchmove', (e) => {
-    if (!isRecording || isLocked) return;
-    const currentY = e.touches[0].clientY;
-    const diff = startY - currentY;
-    lockTooltip.style.transform = `translateY(-${diff}px)`;
-    if (diff > 60) {
-        isLocked = true;
-        lockTooltip.classList.add('hidden');
-        lockedUI.classList.remove('hidden');
-        inputBar.classList.add('invisible');
-    }
-});
-
-micBtn.addEventListener('touchend', (e) => {
-    e.preventDefault();
-    if (pressTimer) clearTimeout(pressTimer);
-    lockTooltip.style.transform = `translateY(0)`; 
-    if (!isRecording || isLocked) return;
-    stopAndSend();
-});
-
-getEl('cancel-lock-btn').addEventListener('click', () => {
-    if(mediaRecorder) { mediaRecorder.stop(); mediaRecorder.stream.getTracks().forEach(t => t.stop()); }
-    resetRecordingUI();
-});
-getEl('send-lock-btn').addEventListener('click', () => {
-    stopAndSend();
-});
-
-const rModal = getEl('requests-modal');
-const rBtn = getEl('requests-btn');
-rBtn.addEventListener('click', () => { rModal.classList.remove('hidden'); if(currentUser.friendRequests) renderRequestsModal(currentUser.friendRequests); });
-getEl('close-requests-btn').addEventListener('click', () => rModal.classList.add('hidden'));
-
-async function renderRequestsModal(uids) {
-    const c = getEl('requests-list-container'); c.innerHTML = "";
-    if(!uids || !uids.length) return c.innerHTML = `<p class="text-gray-500 text-center">No requests.</p>`;
-    for(const uid of uids) {
-        try {
-            const u = await getDoc(doc(db, "users", uid));
-            if(!u.exists()) continue;
-            const d = u.data();
-            const div = document.createElement('div');
-            div.className = "flex justify-between items-center p-3 bg-gray-800 rounded-lg";
-            div.innerHTML = `
-                <div class="flex items-center gap-2"><img src="${d.photoURL}" class="w-8 h-8 rounded-full"><span class="font-bold text-sm">${d.displayName}</span></div>
-                <div class="flex gap-2"><button onclick="respondRequest('${d.uid}',true)" class="text-green-500"><ion-icon name="checkmark-circle" class="text-2xl"></ion-icon></button>
-                <button onclick="respondRequest('${d.uid}',false)" class="text-red-500"><ion-icon name="close-circle" class="text-2xl"></ion-icon></button></div>`;
-            c.appendChild(div);
-        } catch(e) {}
-    }
+// 10. Message Options (Unsend Mock)
+function openMessageOptions(msgId) {
+    dom.msgOptions.modal.classList.remove('hidden');
+    // In a real app, you'd save the msgId to delete it later
 }
+
+dom.msgOptions.closeOverlay.addEventListener('click', () => {
+    dom.msgOptions.modal.classList.add('hidden');
+});
+
+dom.nav.logoutBtn.addEventListener('click', () => {
+    location.reload(); // Simple reload to "logout"
+});
 

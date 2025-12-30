@@ -142,15 +142,6 @@ body {
     font-weight: bold;
 }
 
-/* "View Transcription" Text */
-.transcription-text {
-    font-size: 11px;
-    color: #a3a3a3;
-    margin-top: 2px;
-    margin-left: 4px;
-    font-weight: 400;
-}
-
 /* --- RECORDING STATES --- */
 .mic-active {
     background-color: #ef4444 !important; /* Red */

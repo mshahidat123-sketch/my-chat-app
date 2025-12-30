@@ -1,38 +1,76 @@
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
 
-body { font-family: 'Inter', sans-serif; background-color: #000; }
+body {
+    font-family: 'Inter', sans-serif;
+    background-color: #000;
+}
 
 /* --- ANIMATIONS --- */
-.fade-out { opacity: 0; pointer-events: none; transition: opacity 0.8s ease-out; }
-@keyframes slideIn { from { transform: translateY(20px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
-.animate-slide-in { animation: slideIn 0.6s cubic-bezier(0.16, 1, 0.3, 1) forwards; }
-.animate-fade-in { animation: slideIn 0.2s ease-out forwards; }
 
+/* Fade out for Splash Screen */
+.fade-out {
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.8s ease-out;
+}
+
+/* Slide Up Animation */
+@keyframes slideIn {
+    from { transform: translateY(20px); opacity: 0; }
+    to { transform: translateY(0); opacity: 1; }
+}
+
+.animate-slide-in {
+    animation: slideIn 0.6s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+.animate-fade-in {
+    animation: slideIn 0.2s ease-out forwards;
+}
+
+/* Breathing Logo Animation */
 @keyframes breathe {
     0%, 100% { transform: scale(1); filter: drop-shadow(0 0 10px rgba(74, 222, 128, 0.2)); }
     50% { transform: scale(1.05); filter: drop-shadow(0 0 25px rgba(74, 222, 128, 0.6)); }
 }
-.logo-anim { animation: breathe 3s infinite ease-in-out; }
+
+.logo-anim {
+    animation: breathe 3s infinite ease-in-out;
+}
 
 /* --- SCROLLBARS --- */
-::-webkit-scrollbar { width: 6px; }
-::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb { background: #333; border-radius: 10px; }
+::-webkit-scrollbar {
+    width: 6px;
+}
+::-webkit-scrollbar-track {
+    background: transparent;
+}
+::-webkit-scrollbar-thumb {
+    background: #333;
+    border-radius: 10px;
+}
+::-webkit-scrollbar-thumb:hover {
+    background: #22c55e;
+}
 
-/* --- INSTAGRAM VOICE MESSAGE STYLE --- */
+/* --- INSTAGRAM STYLE AUDIO PLAYER --- */
+
+/* Wrapper for the bubble content */
 .insta-audio-wrapper {
     display: flex;
     flex-direction: column;
     min-width: 200px;
 }
 
+/* The main player row */
 .insta-audio-container {
     display: flex;
     align-items: center;
     gap: 12px;
-    padding: 8px 0;
+    padding: 4px 0;
 }
 
+/* Play Button */
 .insta-play-btn {
     width: 32px;
     height: 32px;
@@ -42,8 +80,13 @@ body { font-family: 'Inter', sans-serif; background-color: #000; }
     color: white;
     cursor: pointer;
     flex-shrink: 0;
+    transition: transform 0.1s;
+}
+.insta-play-btn:active {
+    transform: scale(0.9);
 }
 
+/* The Waveform Container */
 .insta-waveform {
     display: flex;
     align-items: center;
@@ -52,37 +95,42 @@ body { font-family: 'Inter', sans-serif; background-color: #000; }
     flex: 1;
 }
 
+/* Individual Bars */
 .insta-bar {
     width: 3px;
-    background-color: #525252; /* Dark Grey (Unplayed) */
+    background-color: #737373; /* Dark Grey (Unplayed) */
     border-radius: 99px;
-    transition: background-color 0.15s;
+    transition: background-color 0.1s ease-in-out;
 }
 
-/* When played, turns white */
+/* When played, turns white (Added by JS) */
 .insta-bar.played {
     background-color: #ffffff;
 }
 
-/* Random heights for the wave effect */
+/* Random heights for the wave visual */
 .insta-bar:nth-child(odd) { height: 60%; }
 .insta-bar:nth-child(even) { height: 100%; }
 .insta-bar:nth-child(3n) { height: 40%; }
 .insta-bar:nth-child(4n) { height: 80%; }
+.insta-bar:nth-child(5n) { height: 50%; }
 
+/* Meta Info (Duration & Speed) */
 .insta-meta {
     display: flex;
     flex-direction: column;
     justify-content: center;
     align-items: center;
     gap: 4px;
-    margin-left: 4px;
+    margin-left: 6px;
 }
 
 .insta-duration {
     font-size: 11px;
     color: #e5e5e5;
     font-weight: 500;
+    min-width: 25px;
+    text-align: center;
 }
 
 .insta-speed-pill {
@@ -94,19 +142,28 @@ body { font-family: 'Inter', sans-serif; background-color: #000; }
     font-weight: bold;
 }
 
+/* "View Transcription" Text */
 .transcription-text {
     font-size: 11px;
     color: #a3a3a3;
-    margin-top: 4px;
+    margin-top: 2px;
     margin-left: 4px;
+    font-weight: 400;
 }
 
-/* RECORDING STATES */
+/* --- RECORDING STATES --- */
 .mic-active {
-    background-color: #ef4444 !important; transform: scale(1.2); box-shadow: 0 0 15px rgba(239, 68, 68, 0.5);
+    background-color: #ef4444 !important; /* Red */
+    transform: scale(1.2);
+    box-shadow: 0 0 15px rgba(239, 68, 68, 0.5);
+    color: white !important;
 }
+
+/* --- UTILITIES --- */
 .glass-panel {
-    background: rgba(20, 20, 20, 0.7); backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px);
+    background: rgba(20, 20, 20, 0.7);
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
     border: 1px solid rgba(255, 255, 255, 0.1);
 }
 

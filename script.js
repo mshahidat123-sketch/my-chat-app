@@ -32,7 +32,7 @@ let messageToDeleteId = null;
 
 const getEl = (id) => document.getElementById(id);
 
-// --- 1. PRESENCE SYSTEM (DEFINED FIRST) ---
+// --- 1. PRESENCE SYSTEM ---
 function setupPresenceSystem() {
     setInterval(() => {
         if (currentUser) {
@@ -45,109 +45,7 @@ function setupPresenceSystem() {
     });
 }
 
-// --- 2. AUTHENTICATION LOGIC (THE FIX) ---
-
-// Listen for Auth State Changes
-onAuthStateChanged(auth, async (user) => {
-    if (user) {
-        // User is signed in with Google. Check DB for username.
-        const userRef = doc(db, "users", user.uid);
-        const userSnap = await getDoc(userRef);
-
-        if (userSnap.exists()) {
-            // CASE 1: EXISTING USER (Skip Username Screen)
-            currentUser = userSnap.data();
-            await updateDoc(userRef, { isOnline: true, lastSeen: serverTimestamp() });
-            
-            getEl('google-screen').classList.add('hidden');
-            getEl('username-screen').classList.add('hidden');
-            getEl('app-screen').classList.remove('hidden');
-            
-            getEl('my-avatar').src = currentUser.photoURL;
-            loadData();
-            setupPresenceSystem();
-        } else {
-            // CASE 2: NEW USER (Show Username Screen)
-            getEl('google-screen').classList.add('hidden');
-            getEl('username-screen').classList.remove('hidden');
-        }
-    } else {
-        // CASE 3: LOGGED OUT
-        getEl('google-screen').classList.remove('hidden');
-        getEl('username-screen').classList.add('hidden');
-        getEl('app-screen').classList.add('hidden');
-    }
-});
-
-// Google Login Button
-getEl('google-login-btn').addEventListener('click', () => {
-    signInWithPopup(auth, provider).catch((error) => {
-        alert("Google Login Failed: " + error.message);
-    });
-});
-
-// Finish Setup Button (Save Username & Go to App)
-getEl('finish-setup-btn').addEventListener('click', async () => {
-    const username = getEl('setup-username').value.trim().toLowerCase();
-    const googleUser = auth.currentUser;
-
-    if (!username) return alert("Enter a username");
-    
-    getEl('finish-setup-btn').innerText = "Saving...";
-    getEl('finish-setup-btn').disabled = true;
-
-    try {
-        // Check availability
-        const q = query(collection(db, "users"), where("username", "==", username));
-        const snapshot = await getDocs(q);
-
-        if (!snapshot.empty) {
-            getEl('finish-setup-btn').innerText = "Start Messaging";
-            getEl('finish-setup-btn').disabled = false;
-            return alert("Username taken!");
-        }
-
-        // Create Doc
-        const defaultAvatar = "data:image/svg+xml;charset=UTF-8,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3e%3ccircle cx='12' cy='12' r='12' fill='%236B7280'/%3e%3cpath fill='%23E5E7EB' d='M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z'/%3e%3c/svg%3e";
-        
-        const newUser = {
-            uid: googleUser.uid,
-            username: username,
-            displayName: username,
-            photoURL: selectedAvatarBase64 || googleUser.photoURL || defaultAvatar, 
-            friends: [],
-            friendRequests: [],
-            unread: {},
-            isOnline: true,
-            createdAt: serverTimestamp()
-        };
-
-        await setDoc(doc(db, "users", googleUser.uid), newUser);
-        
-        // MANUALLY ENTER APP (Because onAuthStateChanged won't re-fire instantly)
-        currentUser = newUser;
-        getEl('username-screen').classList.add('hidden');
-        getEl('app-screen').classList.remove('hidden');
-        getEl('my-avatar').src = currentUser.photoURL;
-        loadData();
-        setupPresenceSystem();
-        
-    } catch (err) {
-        console.error(err);
-        alert("Setup Error: " + err.message);
-        getEl('finish-setup-btn').disabled = false;
-    }
-});
-
-// Logout
-getEl('logout-btn').addEventListener('click', async () => {
-    if (currentUser) await updateDoc(doc(db, "users", currentUser.uid), { isOnline: false });
-    signOut(auth).then(() => {
-        location.reload();
-    });
-});
-
-// --- 3. GLOBAL HELPERS (Audio, etc) ---
+// --- 2. GLOBAL HELPERS ---
 function formatTime(seconds) {
     if(isNaN(seconds) || seconds === Infinity) return "0:00";
     const m = Math.floor(seconds / 60);
@@ -226,6 +124,7 @@ window.resetAudio = (id) => {
     if(audio && durationEl) durationEl.innerText = formatTime(audio.duration);
 };
 
+// Accept/Decline Logic
 window.respondRequest = async function(targetUid, isAccepted) {
     if (!currentUser) return;
     try {
@@ -244,7 +143,95 @@ window.respondRequest = async function(targetUid, isAccepted) {
     } catch(e) { console.error(e); }
 };
 
-// --- 4. HEADER ACTIONS ---
+// --- 3. AUTHENTICATION ---
+onAuthStateChanged(auth, async (user) => {
+    if (user) {
+        const userRef = doc(db, "users", user.uid);
+        const userSnap = await getDoc(userRef);
+
+        if (userSnap.exists()) {
+            currentUser = userSnap.data();
+            await updateDoc(userRef, { isOnline: true, lastSeen: serverTimestamp() });
+            
+            getEl('google-screen').classList.add('hidden');
+            getEl('username-screen').classList.add('hidden');
+            getEl('app-screen').classList.remove('hidden');
+            
+            getEl('my-avatar').src = currentUser.photoURL;
+            loadData();
+            setupPresenceSystem();
+        } else {
+            getEl('google-screen').classList.add('hidden');
+            getEl('username-screen').classList.remove('hidden');
+        }
+    } else {
+        getEl('google-screen').classList.remove('hidden');
+        getEl('username-screen').classList.add('hidden');
+        getEl('app-screen').classList.add('hidden');
+    }
+});
+
+getEl('google-login-btn').addEventListener('click', () => {
+    signInWithPopup(auth, provider).catch((error) => alert("Login Failed: " + error.message));
+});
+
+getEl('finish-setup-btn').addEventListener('click', async () => {
+    const username = getEl('setup-username').value.trim().toLowerCase();
+    const googleUser = auth.currentUser;
+
+    if (!username) return alert("Enter a username");
+    getEl('finish-setup-btn').innerText = "Saving...";
+    getEl('finish-setup-btn').disabled = true;
+
+    try {
+        const q = query(collection(db, "users"), where("username", "==", username));
+        const snapshot = await getDocs(q);
+
+        if (!snapshot.empty) {
+            getEl('finish-setup-btn').innerText = "Start Messaging";
+            getEl('finish-setup-btn').disabled = false;
+            return alert("Username taken!");
+        }
+
+        const defaultAvatar = "data:image/svg+xml;charset=UTF-8,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3e%3ccircle cx='12' cy='12' r='12' fill='%236B7280'/%3e%3cpath fill='%23E5E7EB' d='M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z'/%3e%3c/svg%3e";
+        
+        const newUser = {
+            uid: googleUser.uid, username: username, displayName: username,
+            photoURL: selectedAvatarBase64 || googleUser.photoURL || defaultAvatar,
+            friends: [], friendRequests: [], unread: {}, isOnline: true, createdAt: serverTimestamp()
+        };
+
+        await setDoc(doc(db, "users", googleUser.uid), newUser);
+        
+        currentUser = newUser;
+        getEl('username-screen').classList.add('hidden');
+        getEl('app-screen').classList.remove('hidden');
+        getEl('my-avatar').src = currentUser.photoURL;
+        loadData();
+        setupPresenceSystem();
+        
+    } catch (err) {
+        alert("Setup Error: " + err.message);
+        getEl('finish-setup-btn').disabled = false;
+    }
+});
+
+// --- 4. HEADER ACTIONS (FIXED) ---
+
+// Requests Button (Bell) - THIS WAS MISSING
+getEl('requests-btn').addEventListener('click', () => {
+    const modal = getEl('requests-modal');
+    modal.classList.remove('hidden');
+    if (currentUser && currentUser.friendRequests) {
+        renderRequestsModal(currentUser.friendRequests);
+    }
+});
+
+// Close Requests Button - THIS WAS MISSING
+getEl('close-requests-btn').addEventListener('click', () => {
+    getEl('requests-modal').classList.add('hidden');
+});
+
 getEl('add-friend-btn').addEventListener('click', async () => {
     const input = prompt("Enter username to add:");
     if (!input) return;
@@ -259,20 +246,21 @@ getEl('add-friend-btn').addEventListener('click', async () => {
     } catch(e) { alert("Error: " + e.message); }
 });
 
+getEl('logout-btn').addEventListener('click', async () => {
+    if (currentUser) await updateDoc(doc(db, "users", currentUser.uid), { isOnline: false });
+    signOut(auth).then(() => location.reload());
+});
+
 // --- 5. UNSEND LOGIC ---
 const msgOptionsModal = getEl('msg-options-modal');
 const unsendBtn = getEl('unsend-msg-btn');
 const closeMsgOptions = getEl('close-msg-options');
 
 function attachLongPress(element, msgId) {
-    element.addEventListener('touchstart', (e) => {
-        longPressTimer = setTimeout(() => openMessageOptions(msgId), 800);
-    });
+    element.addEventListener('touchstart', (e) => { longPressTimer = setTimeout(() => openMessageOptions(msgId), 800); });
     element.addEventListener('touchend', () => clearTimeout(longPressTimer));
     element.addEventListener('touchmove', () => clearTimeout(longPressTimer));
-    element.addEventListener('mousedown', () => {
-        longPressTimer = setTimeout(() => openMessageOptions(msgId), 800);
-    });
+    element.addEventListener('mousedown', () => { longPressTimer = setTimeout(() => openMessageOptions(msgId), 800); });
     element.addEventListener('mouseup', () => clearTimeout(longPressTimer));
     element.addEventListener('mouseleave', () => clearTimeout(longPressTimer));
 }
@@ -294,10 +282,10 @@ unsendBtn.addEventListener('click', async () => {
         const chatId = getChatID();
         await deleteDoc(doc(db, "chats", chatId, "messages", messageToDeleteId));
         msgOptionsModal.classList.add('hidden');
-    } catch (e) { alert("Error unsending: " + e.message); }
+    } catch (e) { alert("Error: " + e.message); }
 });
 
-// --- 6. SETUP AVATAR ---
+// --- 6. AVATAR UPLOAD ---
 getEl('avatar-input').addEventListener('change', (e) => {
     const file = e.target.files[0];
     if (file) {
@@ -322,6 +310,7 @@ function loadData() {
         if (data.friendRequests && data.friendRequests.length > 0) {
             reqBtn.classList.remove('hidden');
             reqBadge.classList.remove('hidden');
+            // Live update modal if open
             if (!getEl('requests-modal').classList.contains('hidden')) renderRequestsModal(data.friendRequests);
         } else {
             reqBtn.classList.add('hidden');
@@ -453,12 +442,10 @@ function loadMessages() {
                     <div class="insta-audio-wrapper">
                         <div class="insta-audio-container" id="container-${uId}">
                             <audio id="audio-${uId}" src="${data.content}" onended="resetAudio('${uId}')" onloadedmetadata="setAudioDuration('${uId}')" ontimeupdate="updateAudioProgress('${uId}')"></audio>
-                            
                             <div class="insta-play-btn" onclick="toggleAudio('${uId}')">
                                 <ion-icon id="icon-play-${uId}" name="play" class="text-xl"></ion-icon>
                                 <ion-icon id="icon-pause-${uId}" name="pause" class="text-xl hidden"></ion-icon>
                             </div>
-                            
                             <div class="insta-waveform" id="waveform-${uId}">
                                 <div class="insta-bar"></div><div class="insta-bar"></div><div class="insta-bar"></div>
                                 <div class="insta-bar"></div><div class="insta-bar"></div><div class="insta-bar"></div>
@@ -466,7 +453,6 @@ function loadMessages() {
                                 <div class="insta-bar"></div><div class="insta-bar"></div><div class="insta-bar"></div>
                                 <div class="insta-bar"></div><div class="insta-bar"></div><div class="insta-bar"></div>
                             </div>
-
                             <div class="insta-meta">
                                 <span id="duration-${uId}" class="insta-duration">...</span>
                                 <span class="insta-speed-pill">1x</span>
@@ -623,4 +609,24 @@ getEl('cancel-lock-btn').addEventListener('click', () => {
 getEl('send-lock-btn').addEventListener('click', () => {
     stopAndSend();
 });
+
+// Render Modal Logic
+async function renderRequestsModal(uids) {
+    const c = getEl('requests-list-container'); c.innerHTML = "";
+    if(!uids || !uids.length) return c.innerHTML = `<p class="text-gray-500 text-center">No requests.</p>`;
+    for(const uid of uids) {
+        try {
+            const u = await getDoc(doc(db, "users", uid));
+            if(!u.exists()) continue;
+            const d = u.data();
+            const div = document.createElement('div');
+            div.className = "flex justify-between items-center p-3 bg-gray-800 rounded-lg";
+            div.innerHTML = `
+                <div class="flex items-center gap-2"><img src="${d.photoURL}" class="w-8 h-8 rounded-full"><span class="font-bold text-sm">${d.displayName}</span></div>
+                <div class="flex gap-2"><button onclick="respondRequest('${d.uid}',true)" class="text-green-500"><ion-icon name="checkmark-circle" class="text-2xl"></ion-icon></button>
+                <button onclick="respondRequest('${d.uid}',false)" class="text-red-500"><ion-icon name="close-circle" class="text-2xl"></ion-icon></button></div>`;
+            c.appendChild(div);
+        } catch(e) {}
+    }
+}
 

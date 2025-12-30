@@ -458,7 +458,7 @@ function loadMessages() {
                                 <span class="insta-speed-pill">1x</span>
                             </div>
                         </div>
-                        <p class="transcription-text">View transcriptiona</p>
+                       
                     </div>`;
             } else {
                 contentHtml = `<p class="text-[15px] leading-snug">${data.content}</p>`;

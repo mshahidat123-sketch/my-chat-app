@@ -1,4 +1,5 @@
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js";
+import { getAuth, signInWithPopup, GoogleAuthProvider, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-auth.js";
 import { getFirestore, collection, addDoc, setDoc, getDocs, doc, query, where, orderBy, onSnapshot, serverTimestamp, updateDoc, arrayUnion, arrayRemove, increment, deleteField, getDoc, deleteDoc, writeBatch } 
 from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
 
@@ -12,7 +13,9 @@ const firebaseConfig = {
 };
 
 const app = initializeApp(firebaseConfig);
+const auth = getAuth(app);
 const db = getFirestore(app);
+const provider = new GoogleAuthProvider();
 
 // --- VARIABLES ---
 let currentUser = null;
@@ -29,7 +32,7 @@ let messageToDeleteId = null;
 
 const getEl = (id) => document.getElementById(id);
 
-// --- 1. CRITICAL FIX: DEFINE PRESENCE FUNCTION FIRST ---
+// --- 1. PRESENCE SYSTEM (DEFINED FIRST) ---
 function setupPresenceSystem() {
     setInterval(() => {
         if (currentUser) {
@@ -42,7 +45,109 @@ function setupPresenceSystem() {
     });
 }
 
-// --- 2. GLOBAL HELPERS ---
+// --- 2. AUTHENTICATION LOGIC ---
+
+// Listen for Auth State Changes
+onAuthStateChanged(auth, async (user) => {
+    if (user) {
+        // User is signed in with Google
+        const userRef = doc(db, "users", user.uid);
+        const userSnap = await getDoc(userRef);
+
+        if (userSnap.exists()) {
+            // CASE 1: RETURNING USER (HAS USERNAME)
+            currentUser = userSnap.data();
+            await updateDoc(userRef, { isOnline: true, lastSeen: serverTimestamp() });
+            
+            getEl('google-screen').classList.add('hidden');
+            getEl('username-screen').classList.add('hidden');
+            getEl('app-screen').classList.remove('hidden');
+            
+            getEl('my-avatar').src = currentUser.photoURL;
+            loadData();
+            setupPresenceSystem();
+        } else {
+            // CASE 2: NEW USER (NEEDS USERNAME)
+            getEl('google-screen').classList.add('hidden');
+            getEl('username-screen').classList.remove('hidden');
+        }
+    } else {
+        // CASE 3: LOGGED OUT
+        getEl('google-screen').classList.remove('hidden');
+        getEl('username-screen').classList.add('hidden');
+        getEl('app-screen').classList.add('hidden');
+    }
+});
+
+// Google Login Button
+getEl('google-login-btn').addEventListener('click', () => {
+    signInWithPopup(auth, provider).catch((error) => {
+        alert("Google Login Failed: " + error.message);
+    });
+});
+
+// Finish Setup Button (Username)
+getEl('finish-setup-btn').addEventListener('click', async () => {
+    const username = getEl('setup-username').value.trim().toLowerCase();
+    const googleUser = auth.currentUser;
+
+    if (!username) return alert("Enter a username");
+    
+    getEl('finish-setup-btn').innerText = "Saving...";
+    getEl('finish-setup-btn').disabled = true;
+
+    try {
+        // Check availability
+        const q = query(collection(db, "users"), where("username", "==", username));
+        const snapshot = await getDocs(q);
+
+        if (!snapshot.empty) {
+            getEl('finish-setup-btn').innerText = "Start Messaging";
+            getEl('finish-setup-btn').disabled = false;
+            return alert("Username taken!");
+        }
+
+        // Create Doc
+        const defaultAvatar = "data:image/svg+xml;charset=UTF-8,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3e%3ccircle cx='12' cy='12' r='12' fill='%23BDBDBD'/%3e%3cpath fill='%23FFFFFF' d='M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z'/%3e%3c/svg%3e";
+        
+        const newUser = {
+            uid: googleUser.uid,
+            username: username,
+            displayName: username,
+            photoURL: selectedAvatarBase64 || googleUser.photoURL || defaultAvatar, // Use Google photo if no upload
+            friends: [],
+            friendRequests: [],
+            unread: {},
+            isOnline: true,
+            createdAt: serverTimestamp()
+        };
+
+        await setDoc(doc(db, "users", googleUser.uid), newUser);
+        
+        // CRITICAL FIX: MANUALLY TRANSITION TO APP
+        currentUser = newUser;
+        getEl('username-screen').classList.add('hidden');
+        getEl('app-screen').classList.remove('hidden');
+        getEl('my-avatar').src = currentUser.photoURL;
+        loadData();
+        setupPresenceSystem();
+        
+    } catch (err) {
+        console.error(err);
+        alert("Setup Error: " + err.message);
+        getEl('finish-setup-btn').disabled = false;
+    }
+});
+
+// Logout
+getEl('logout-btn').addEventListener('click', async () => {
+    if (currentUser) await updateDoc(doc(db, "users", currentUser.uid), { isOnline: false });
+    signOut(auth).then(() => {
+        location.reload();
+    });
+});
+
+// --- 3. HELPERS (Audio, Format) ---
 function formatTime(seconds) {
     if(isNaN(seconds) || seconds === Infinity) return "0:00";
     const m = Math.floor(seconds / 60);
@@ -58,20 +163,24 @@ window.setAudioDuration = (id) => {
 
 window.updateAudioProgress = (id) => {
     const audio = document.getElementById(`audio-${id}`);
-    const durationEl = document.getElementById(`duration-${id}`);
+    const playhead = document.getElementById(`playhead-${id}`);
     const waveform = document.getElementById(`waveform-${id}`);
+    const durationEl = document.getElementById(`duration-${id}`);
     
     if (!audio) return;
     
-    // Timer Logic
     const timeLeft = audio.duration - audio.currentTime;
     if(durationEl) durationEl.innerText = formatTime(timeLeft);
 
-    // Waveform Coloring Logic
+    const percent = (audio.currentTime / audio.duration) * 100;
+    if(playhead) {
+        playhead.style.display = 'block';
+        playhead.style.left = `${percent}%`;
+    }
+
     if(waveform) {
-        const bars = waveform.querySelectorAll('.insta-bar');
-        const percent = audio.currentTime / audio.duration;
-        const activeCount = Math.floor(percent * bars.length);
+        const bars = waveform.querySelectorAll('.wave-bar');
+        const activeCount = Math.floor((percent/100) * bars.length);
         bars.forEach((bar, idx) => {
             if(idx < activeCount) bar.classList.add('played');
             else bar.classList.remove('played');
@@ -105,13 +214,15 @@ window.toggleAudio = (id) => {
 window.resetAudio = (id) => {
     const playIcon = document.getElementById(`icon-play-${id}`);
     const pauseIcon = document.getElementById(`icon-pause-${id}`);
+    const playhead = document.getElementById(`playhead-${id}`);
     const waveform = document.getElementById(`waveform-${id}`);
     const durationEl = document.getElementById(`duration-${id}`);
     const audio = document.getElementById(`audio-${id}`);
 
     if(playIcon) playIcon.classList.remove('hidden');
     if(pauseIcon) pauseIcon.classList.add('hidden');
-    if(waveform) waveform.querySelectorAll('.insta-bar').forEach(b => b.classList.remove('played'));
+    if(playhead) { playhead.style.display = 'none'; playhead.style.left = '0%'; }
+    if(waveform) waveform.querySelectorAll('.wave-bar').forEach(b => b.classList.remove('played'));
     if(audio && durationEl) durationEl.innerText = formatTime(audio.duration);
 };
 
@@ -133,7 +244,7 @@ window.respondRequest = async function(targetUid, isAccepted) {
     } catch(e) { console.error(e); }
 };
 
-// --- 3. ACTIONS ---
+// --- 4. HEADER ACTIONS ---
 getEl('add-friend-btn').addEventListener('click', async () => {
     const input = prompt("Enter username to add:");
     if (!input) return;
@@ -148,12 +259,7 @@ getEl('add-friend-btn').addEventListener('click', async () => {
     } catch(e) { alert("Error: " + e.message); }
 });
 
-getEl('logout-btn').addEventListener('click', async () => {
-    if (currentUser) await updateDoc(doc(db, "users", currentUser.uid), { isOnline: false });
-    location.reload();
-});
-
-// --- 4. UNSEND ---
+// --- 5. UNSEND LOGIC ---
 const msgOptionsModal = getEl('msg-options-modal');
 const unsendBtn = getEl('unsend-msg-btn');
 const closeMsgOptions = getEl('close-msg-options');
@@ -191,7 +297,7 @@ unsendBtn.addEventListener('click', async () => {
     } catch (e) { alert("Error unsending: " + e.message); }
 });
 
-// --- 5. LOGIN ---
+// --- 6. SETUP AVATAR ---
 getEl('avatar-input').addEventListener('change', (e) => {
     const file = e.target.files[0];
     if (file) {
@@ -205,44 +311,7 @@ getEl('avatar-input').addEventListener('change', (e) => {
     }
 });
 
-getEl('login-btn').addEventListener('click', async () => {
-    const username = getEl('login-username').value.trim().toLowerCase();
-    if (!username) return alert("Enter a username");
-    getEl('login-btn').innerText = "Entering...";
-    getEl('login-btn').disabled = true;
-
-    try {
-        const q = query(collection(db, "users"), where("username", "==", username));
-        const snapshot = await getDocs(q);
-
-        if (!snapshot.empty) {
-            snapshot.forEach(doc => currentUser = doc.data());
-            if (selectedAvatarBase64) await updateDoc(doc(db, "users", currentUser.uid), { photoURL: selectedAvatarBase64 });
-        } else {
-            const newUid = "u_" + Date.now();
-            const defaultAvatar = "data:image/svg+xml;charset=UTF-8,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3e%3ccircle cx='12' cy='12' r='12' fill='%236B7280'/%3e%3cpath fill='%23E5E7EB' d='M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z'/%3e%3c/svg%3e";
-            const newUser = {
-                uid: newUid, username: username, displayName: username,
-                photoURL: selectedAvatarBase64 || defaultAvatar,
-                friends: [], friendRequests: [], unread: {}, isOnline: true, createdAt: serverTimestamp()
-            };
-            await setDoc(doc(db, "users", newUid), newUser);
-            currentUser = newUser;
-        }
-        await updateDoc(doc(db, "users", currentUser.uid), { isOnline: true, lastSeen: serverTimestamp() });
-
-        getEl('login-screen').classList.add('hidden');
-        getEl('app-screen').classList.remove('hidden');
-        getEl('my-avatar').src = currentUser.photoURL;
-        loadData(); 
-        setupPresenceSystem(); // Now this function is definitely defined above
-    } catch (err) {
-        alert("Login Error: " + err.message);
-        getEl('login-btn').disabled = false;
-    }
-});
-
-// --- 6. DATA LOADING ---
+// --- 7. DATA LOADING ---
 function loadData() {
     onSnapshot(doc(db, "users", currentUser.uid), (docSnap) => {
         const data = docSnap.data();
@@ -318,7 +387,7 @@ function renderFriendsList(friendsList, unreadMap) {
     });
 }
 
-// --- 7. CHAT & MESSAGES ---
+// --- 8. CHAT LOGIC ---
 window.openChat = async (friend) => {
     selectedChatUser = friend;
     getEl('sidebar').classList.add('hidden');
@@ -380,31 +449,21 @@ function loadMessages() {
 
             if (data.type === "audio") {
                 const uId = doc.id;
-                // INSTAGRAM STYLE STRUCTURE
                 contentHtml = `
-                    <div class="insta-audio-wrapper">
-                        <div class="insta-audio-container" id="container-${uId}">
-                            <audio id="audio-${uId}" src="${data.content}" onended="resetAudio('${uId}')" onloadedmetadata="setAudioDuration('${uId}')" ontimeupdate="updateAudioProgress('${uId}')"></audio>
-                            
-                            <div class="insta-play-btn" onclick="toggleAudio('${uId}')">
-                                <ion-icon id="icon-play-${uId}" name="play" class="text-xl"></ion-icon>
-                                <ion-icon id="icon-pause-${uId}" name="pause" class="text-xl hidden"></ion-icon>
-                            </div>
-                            
-                            <div class="insta-waveform" id="waveform-${uId}">
-                                <div class="insta-bar"></div><div class="insta-bar"></div><div class="insta-bar"></div>
-                                <div class="insta-bar"></div><div class="insta-bar"></div><div class="insta-bar"></div>
-                                <div class="insta-bar"></div><div class="insta-bar"></div><div class="insta-bar"></div>
-                                <div class="insta-bar"></div><div class="insta-bar"></div><div class="insta-bar"></div>
-                                <div class="insta-bar"></div><div class="insta-bar"></div><div class="insta-bar"></div>
-                            </div>
-
-                            <div class="insta-meta">
-                                <span id="duration-${uId}" class="insta-duration">...</span>
-                                <span class="insta-speed-pill">1x</span>
-                            </div>
+                    <div class="audio-msg-container" id="container-${uId}">
+                        <audio id="audio-${uId}" src="${data.content}" onended="resetAudio('${uId}')" onloadedmetadata="setAudioDuration('${uId}')" ontimeupdate="updateAudioProgress('${uId}')"></audio>
+                        <div class="play-btn-circle" onclick="toggleAudio('${uId}')">
+                            <ion-icon id="icon-play-${uId}" name="play" class="ml-0.5 text-lg"></ion-icon>
+                            <ion-icon id="icon-pause-${uId}" name="pause" class="hidden text-lg"></ion-icon>
                         </div>
-                        <p class="transcription-text">View transcription</p>
+                        <div class="waveform-box" id="waveform-${uId}">
+                            <div id="playhead-${uId}" class="playhead-line"></div>
+                            <div class="wave-bar"></div><div class="wave-bar"></div><div class="wave-bar"></div><div class="wave-bar"></div>
+                            <div class="wave-bar"></div><div class="wave-bar"></div><div class="wave-bar"></div><div class="wave-bar"></div>
+                            <div class="wave-bar"></div><div class="wave-bar"></div><div class="wave-bar"></div><div class="wave-bar"></div>
+                            <div class="wave-bar"></div><div class="wave-bar"></div><div class="wave-bar"></div><div class="wave-bar"></div>
+                        </div>
+                        <span id="duration-${uId}" class="audio-duration">...</span>
                     </div>`;
             } else {
                 contentHtml = `<p class="text-[15px] leading-snug">${data.content}</p>`;
@@ -416,7 +475,7 @@ function loadMessages() {
             const bubbleColor = isMe ? 'bg-[#374151] text-white rounded-[22px] rounded-br-sm' : 'bg-[#262626] text-white rounded-[22px] rounded-bl-sm';
             
             const bubbleContent = document.createElement("div");
-            bubbleContent.className = `max-w-[85%] px-4 py-2 ${bubbleColor} shadow-sm relative group cursor-pointer active:scale-95 transition-transform select-none`;
+            bubbleContent.className = `max-w-[75%] px-4 py-3 ${bubbleColor} shadow-sm relative group cursor-pointer active:scale-95 transition-transform select-none`;
             bubbleContent.innerHTML = contentHtml;
             
             if (isMe) attachLongPress(bubbleContent, doc.id);
@@ -440,7 +499,7 @@ function loadMessages() {
     });
 }
 
-// --- 8. SENDING ---
+// --- 9. SENDING ACTIONS ---
 getEl('send-btn').addEventListener('click', async () => {
     const input = getEl('msg-input');
     const text = input.value.trim();

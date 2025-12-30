@@ -45,17 +45,17 @@ function setupPresenceSystem() {
     });
 }
 
-// --- 2. AUTHENTICATION LOGIC ---
+// --- 2. AUTHENTICATION LOGIC (THE FIX) ---
 
 // Listen for Auth State Changes
 onAuthStateChanged(auth, async (user) => {
     if (user) {
-        // User is signed in with Google
+        // User is signed in with Google. Check DB for username.
         const userRef = doc(db, "users", user.uid);
         const userSnap = await getDoc(userRef);
 
         if (userSnap.exists()) {
-            // CASE 1: RETURNING USER (HAS USERNAME)
+            // CASE 1: EXISTING USER (Skip Username Screen)
             currentUser = userSnap.data();
             await updateDoc(userRef, { isOnline: true, lastSeen: serverTimestamp() });
             
@@ -67,7 +67,7 @@ onAuthStateChanged(auth, async (user) => {
             loadData();
             setupPresenceSystem();
         } else {
-            // CASE 2: NEW USER (NEEDS USERNAME)
+            // CASE 2: NEW USER (Show Username Screen)
             getEl('google-screen').classList.add('hidden');
             getEl('username-screen').classList.remove('hidden');
         }
@@ -86,7 +86,7 @@ getEl('google-login-btn').addEventListener('click', () => {
     });
 });
 
-// Finish Setup Button (Username)
+// Finish Setup Button (Save Username & Go to App)
 getEl('finish-setup-btn').addEventListener('click', async () => {
     const username = getEl('setup-username').value.trim().toLowerCase();
     const googleUser = auth.currentUser;
@@ -108,13 +108,13 @@ getEl('finish-setup-btn').addEventListener('click', async () => {
         }
 
         // Create Doc
-        const defaultAvatar = "data:image/svg+xml;charset=UTF-8,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3e%3ccircle cx='12' cy='12' r='12' fill='%23BDBDBD'/%3e%3cpath fill='%23FFFFFF' d='M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z'/%3e%3c/svg%3e";
+        const defaultAvatar = "data:image/svg+xml;charset=UTF-8,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3e%3ccircle cx='12' cy='12' r='12' fill='%236B7280'/%3e%3cpath fill='%23E5E7EB' d='M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z'/%3e%3c/svg%3e";
         
         const newUser = {
             uid: googleUser.uid,
             username: username,
             displayName: username,
-            photoURL: selectedAvatarBase64 || googleUser.photoURL || defaultAvatar, // Use Google photo if no upload
+            photoURL: selectedAvatarBase64 || googleUser.photoURL || defaultAvatar, 
             friends: [],
             friendRequests: [],
             unread: {},
@@ -124,7 +124,7 @@ getEl('finish-setup-btn').addEventListener('click', async () => {
 
         await setDoc(doc(db, "users", googleUser.uid), newUser);
         
-        // CRITICAL FIX: MANUALLY TRANSITION TO APP
+        // MANUALLY ENTER APP (Because onAuthStateChanged won't re-fire instantly)
         currentUser = newUser;
         getEl('username-screen').classList.add('hidden');
         getEl('app-screen').classList.remove('hidden');
@@ -147,7 +147,7 @@ getEl('logout-btn').addEventListener('click', async () => {
     });
 });
 
-// --- 3. HELPERS (Audio, Format) ---
+// --- 3. GLOBAL HELPERS (Audio, etc) ---
 function formatTime(seconds) {
     if(isNaN(seconds) || seconds === Infinity) return "0:00";
     const m = Math.floor(seconds / 60);
@@ -179,7 +179,7 @@ window.updateAudioProgress = (id) => {
     }
 
     if(waveform) {
-        const bars = waveform.querySelectorAll('.wave-bar');
+        const bars = waveform.querySelectorAll('.insta-bar');
         const activeCount = Math.floor((percent/100) * bars.length);
         bars.forEach((bar, idx) => {
             if(idx < activeCount) bar.classList.add('played');
@@ -222,7 +222,7 @@ window.resetAudio = (id) => {
     if(playIcon) playIcon.classList.remove('hidden');
     if(pauseIcon) pauseIcon.classList.add('hidden');
     if(playhead) { playhead.style.display = 'none'; playhead.style.left = '0%'; }
-    if(waveform) waveform.querySelectorAll('.wave-bar').forEach(b => b.classList.remove('played'));
+    if(waveform) waveform.querySelectorAll('.insta-bar').forEach(b => b.classList.remove('played'));
     if(audio && durationEl) durationEl.innerText = formatTime(audio.duration);
 };
 
@@ -450,20 +450,29 @@ function loadMessages() {
             if (data.type === "audio") {
                 const uId = doc.id;
                 contentHtml = `
-                    <div class="audio-msg-container" id="container-${uId}">
-                        <audio id="audio-${uId}" src="${data.content}" onended="resetAudio('${uId}')" onloadedmetadata="setAudioDuration('${uId}')" ontimeupdate="updateAudioProgress('${uId}')"></audio>
-                        <div class="play-btn-circle" onclick="toggleAudio('${uId}')">
-                            <ion-icon id="icon-play-${uId}" name="play" class="ml-0.5 text-lg"></ion-icon>
-                            <ion-icon id="icon-pause-${uId}" name="pause" class="hidden text-lg"></ion-icon>
+                    <div class="insta-audio-wrapper">
+                        <div class="insta-audio-container" id="container-${uId}">
+                            <audio id="audio-${uId}" src="${data.content}" onended="resetAudio('${uId}')" onloadedmetadata="setAudioDuration('${uId}')" ontimeupdate="updateAudioProgress('${uId}')"></audio>
+                            
+                            <div class="insta-play-btn" onclick="toggleAudio('${uId}')">
+                                <ion-icon id="icon-play-${uId}" name="play" class="text-xl"></ion-icon>
+                                <ion-icon id="icon-pause-${uId}" name="pause" class="text-xl hidden"></ion-icon>
+                            </div>
+                            
+                            <div class="insta-waveform" id="waveform-${uId}">
+                                <div class="insta-bar"></div><div class="insta-bar"></div><div class="insta-bar"></div>
+                                <div class="insta-bar"></div><div class="insta-bar"></div><div class="insta-bar"></div>
+                                <div class="insta-bar"></div><div class="insta-bar"></div><div class="insta-bar"></div>
+                                <div class="insta-bar"></div><div class="insta-bar"></div><div class="insta-bar"></div>
+                                <div class="insta-bar"></div><div class="insta-bar"></div><div class="insta-bar"></div>
+                            </div>
+
+                            <div class="insta-meta">
+                                <span id="duration-${uId}" class="insta-duration">...</span>
+                                <span class="insta-speed-pill">1x</span>
+                            </div>
                         </div>
-                        <div class="waveform-box" id="waveform-${uId}">
-                            <div id="playhead-${uId}" class="playhead-line"></div>
-                            <div class="wave-bar"></div><div class="wave-bar"></div><div class="wave-bar"></div><div class="wave-bar"></div>
-                            <div class="wave-bar"></div><div class="wave-bar"></div><div class="wave-bar"></div><div class="wave-bar"></div>
-                            <div class="wave-bar"></div><div class="wave-bar"></div><div class="wave-bar"></div><div class="wave-bar"></div>
-                            <div class="wave-bar"></div><div class="wave-bar"></div><div class="wave-bar"></div><div class="wave-bar"></div>
-                        </div>
-                        <span id="duration-${uId}" class="audio-duration">...</span>
+                        <p class="transcription-text">View transcription</p>
                     </div>`;
             } else {
                 contentHtml = `<p class="text-[15px] leading-snug">${data.content}</p>`;
@@ -475,7 +484,7 @@ function loadMessages() {
             const bubbleColor = isMe ? 'bg-[#374151] text-white rounded-[22px] rounded-br-sm' : 'bg-[#262626] text-white rounded-[22px] rounded-bl-sm';
             
             const bubbleContent = document.createElement("div");
-            bubbleContent.className = `max-w-[75%] px-4 py-3 ${bubbleColor} shadow-sm relative group cursor-pointer active:scale-95 transition-transform select-none`;
+            bubbleContent.className = `max-w-[85%] px-4 py-2 ${bubbleColor} shadow-sm relative group cursor-pointer active:scale-95 transition-transform select-none`;
             bubbleContent.innerHTML = contentHtml;
             
             if (isMe) attachLongPress(bubbleContent, doc.id);
@@ -499,7 +508,7 @@ function loadMessages() {
     });
 }
 
-// --- 9. SENDING ACTIONS ---
+// --- 9. SENDING ---
 getEl('send-btn').addEventListener('click', async () => {
     const input = getEl('msg-input');
     const text = input.value.trim();
